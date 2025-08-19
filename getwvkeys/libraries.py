@@ -969,7 +969,7 @@ class Widevine(BaseService):
                 raise BadRequest("[Widevine] Exception: " + str(e))
 
             try:
-                keys = cdm.get_keys(session_id=bytes.fromhex(self.session_id))
+                keys = cdm.get_keys(session_id=bytes.fromhex(self.session_id), type_="CONTENT")
             except WidevineInvalidSession as e:
                 logger.exception(e)
                 raise BadRequest("[Widevine] Invalid Session")
