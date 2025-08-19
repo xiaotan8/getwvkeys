@@ -1003,6 +1003,7 @@ class Widevine(BaseService):
             "license_url": self.license_url,
             "added_at": self.time,
             "keys": list(),
+            "kid": self.kid,
             "session_id": self.session_id,
         }
         for key in self.content_keys:
