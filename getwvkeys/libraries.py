@@ -706,6 +706,7 @@ class PlayReady(BaseService):
         results = {
             "license_url": self.license_url,
             "added_at": self.time,
+            "kid": self.kid,
             "keys": list(),
             "session_id": self.session_id,
         }
