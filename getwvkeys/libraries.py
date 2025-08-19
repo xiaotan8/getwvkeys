@@ -945,7 +945,7 @@ class Widevine(BaseService):
 
                 return render_template("success.html", page_title="Success", results=data)
             else:
-                return jsonify({"challenge": base64.b64encode(license_request), "session_id": self.session_id})
+                return jsonify({"challenge": base64.b64encode(license_request).decode(), "session_id": self.session_id})
         else:
             # get session
             cdm = wv_sessions.get(self.session_id)
