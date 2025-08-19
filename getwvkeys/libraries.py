@@ -631,7 +631,7 @@ class PlayReady(BaseService):
                 for key in keys:
                     self.content_keys.append(
                         CachedKey(
-                            key.kid.hex,
+                            key.key_id.hex,
                             self.time,
                             self.user_id,
                             self.license_url,
