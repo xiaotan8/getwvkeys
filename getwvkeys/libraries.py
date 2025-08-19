@@ -102,15 +102,11 @@ def get_random_prd():
 
 
 def is_user_prd(device: str):
-    return next(
-        (False for entry in config.DEFAULT_PRDS if entry["code"] == device), False
-    )
+    return next((False for entry in config.DEFAULT_PRDS if entry["code"] == device), False)
 
 
 def is_user_wvd(device: str):
-    return next(
-        (False for entry in config.DEFAULT_WVDS if entry["code"] == device), False
-    )
+    return next((False for entry in config.DEFAULT_WVDS if entry["code"] == device), False)
 
 
 class Library:
@@ -303,9 +299,7 @@ class Library:
             user.prds.append(device)
             self.db.session.commit()
         else:
-            raise BadRequest(
-                "PRD already uploaded, please use the existing hash found on the profile page."
-            )
+            raise BadRequest("PRD already uploaded, please use the existing hash found on the profile page.")
 
         return device.hash
 
@@ -338,9 +332,7 @@ class Library:
             user.wvds.append(device)
             self.db.session.commit()
         else:
-            raise BadRequest(
-                "WVD already uploaded, please use the existing hash found on the profile page."
-            )
+            raise BadRequest("WVD already uploaded, please use the existing hash found on the profile page.")
 
         return device.hash
 
@@ -599,9 +591,7 @@ class PlayReady(BaseService):
                 self.session_id = cdm.open().hex()
                 pr_sessions[self.session_id] = cdm
             except PlayreadyTooManySessions as e:
-                raise InternalServerError(
-                    "[PlayReady] Too many open sessions, please try again in a few minutes"
-                )
+                raise InternalServerError("[PlayReady] Too many open sessions, please try again in a few minutes")
 
             try:
                 wrm_headers = self.pssh.get_wrm_headers(self.downgrade)
@@ -617,9 +607,7 @@ class PlayReady(BaseService):
 
             if self.curl or self.is_web:
                 try:
-                    license_response = self.post_data(
-                        self.license_url, self.headers, license_request, self.proxy
-                    )
+                    license_response = self.post_data(self.license_url, self.headers, license_request, self.proxy)
                     cdm.parse_license(
                         session_id=bytes.fromhex(self.session_id),
                         licence=license_response,
@@ -660,20 +648,14 @@ class PlayReady(BaseService):
                 if self.curl:
                     return jsonify(data)
 
-                return render_template(
-                    "success.html", page_title="Success", results=data
-                )
+                return render_template("success.html", page_title="Success", results=data)
             else:
-                return jsonify(
-                    {"challenge": license_request, "session_id": self.session_id}
-                )
+                return jsonify({"challenge": license_request, "session_id": self.session_id})
         else:
             # get session
             cdm = pr_sessions.get(self.session_id)
             if not cdm:
-                raise BadRequest(
-                    "[PlayReady] Session not found, did you generate a challenge first?"
-                )
+                raise BadRequest("[PlayReady] Session not found, did you generate a challenge first?")
 
             try:
                 cdm.parse_license(
@@ -890,15 +872,11 @@ class Widevine(BaseService):
                 self.session_id = cdm.open().hex()
                 wv_sessions[self.session_id] = cdm
             except WidevineTooManySessions as e:
-                raise InternalServerError(
-                    "[Widevine] Too many open sessions, please try again in a few minutes"
-                )
+                raise InternalServerError("[Widevine] Too many open sessions, please try again in a few minutes")
 
             if self.server_certificate:
                 try:
-                    cdm.set_service_certificate(
-                        self.session_id, self.server_certificate
-                    )
+                    cdm.set_service_certificate(self.session_id, self.server_certificate)
                 except WidevineInvalidSession as e:
                     logger.exception(e)
                     raise BadRequest("[Widevine] Invalid Session")
@@ -924,9 +902,7 @@ class Widevine(BaseService):
 
             if self.curl or self.is_web:
                 try:
-                    license_response = self.post_data(
-                        self.license_url, self.headers, license_request, self.proxy
-                    )
+                    license_response = self.post_data(self.license_url, self.headers, license_request, self.proxy)
                     cdm.parse_license(
                         session_id=bytes.fromhex(self.session_id),
                         license_message=license_response,
@@ -967,20 +943,14 @@ class Widevine(BaseService):
                 if self.curl:
                     return jsonify(data)
 
-                return render_template(
-                    "success.html", page_title="Success", results=data
-                )
+                return render_template("success.html", page_title="Success", results=data)
             else:
-                return jsonify(
-                    {"challenge": license_request, "session_id": self.session_id}
-                )
+                return jsonify({"challenge": base64.b64encode(license_request), "session_id": self.session_id})
         else:
             # get session
             cdm = wv_sessions.get(self.session_id)
             if not cdm:
-                raise BadRequest(
-                    "Session not found, did you generate a challenge first?"
-                )
+                raise BadRequest("Session not found, did you generate a challenge first?")
 
             try:
                 cdm.parse_license(
