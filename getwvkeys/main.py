@@ -72,7 +72,7 @@ app = Flask(__name__.split(".")[0], root_path=str(Path(__file__).parent))
 app.config["SQLALCHEMY_DATABASE_URI"] = config.SQLALCHEMY_DATABASE_URI
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.secret_key = config.SECRET_KEY
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=1, x_host=1, x_prefix=1)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 db.init_app(app)
 
 # Logger setup
@@ -199,6 +199,10 @@ def log_date_time_string():
     return s
 
 
+def get_real_ip():
+    return request.headers.get("CF-Connecting-IP") or request.headers.get("X-Real-IP") or request.remote_addr
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return FlaskUser.get(db, user_id)
@@ -211,6 +215,7 @@ def start_timer():
 
 @app.after_request
 def log_request_info(response):
+    real_ip = get_real_ip()
     try:
         duration = int((time.time() - g.start_time) * 1000)
     except Exception:
@@ -221,7 +226,7 @@ def log_request_info(response):
             user_id=current_user.id if current_user.is_authenticated else None,
             path=request.path,
             timestamp=datetime.now(timezone.utc),
-            ip=request.headers.get("X-Forwarded-For", request.remote_addr),
+            ip=real_ip,
             user_agent=request.headers.get("User-Agent"),
             status_code=response.status_code,
             duration_ms=duration,
@@ -231,7 +236,7 @@ def log_request_info(response):
         db.session.commit()
 
     user_id = current_user.id if current_user.is_authenticated else "N/A"
-    l = f'{request.remote_addr} - - [{log_date_time_string()}] "{request.method} {request.path}" {response.status_code} - {user_id}'
+    l = f'{real_ip} - - [{log_date_time_string()}] "{request.method} {request.path}" {response.status_code} - {user_id}'
 
     if request.data and len(request.data) > 0 and request.headers.get("Content-Type") == "application/json":
         l += f"\nRequest Data: {request.data.decode()}"
