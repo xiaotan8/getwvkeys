@@ -631,7 +631,7 @@ class PlayReady(BaseService):
                 for key in keys:
                     self.content_keys.append(
                         CachedKey(
-                            key.key_id.hex,
+                            key.kid.hex,
                             self.time,
                             self.user_id,
                             self.license_url,
@@ -684,7 +684,7 @@ class PlayReady(BaseService):
             for key in keys:
                 self.content_keys.append(
                     CachedKey(
-                        key.key_id.hex,
+                        key.kid.hex,
                         self.time,
                         self.user_id,
                         self.license_url,
@@ -979,7 +979,7 @@ class Widevine(BaseService):
             for key in keys:
                 self.content_keys.append(
                     CachedKey(
-                        key.key_id.hex,
+                        key.kid.hex,
                         self.time,
                         self.user_id,
                         self.license_url,
