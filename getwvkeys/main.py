@@ -72,7 +72,7 @@ app = Flask(__name__.split(".")[0], root_path=str(Path(__file__).parent))
 app.config["SQLALCHEMY_DATABASE_URI"] = config.SQLALCHEMY_DATABASE_URI
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.secret_key = config.SECRET_KEY
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=1, x_host=1, x_prefix=1)
 db.init_app(app)
 
 # Logger setup
@@ -112,9 +112,7 @@ blacklist = Blacklist()
 
 
 # Utilities
-def authentication_required(
-    exempt_methods=[], flags_required: int = None, ignore_suspended: bool = False
-):
+def authentication_required(exempt_methods=[], flags_required: int = None, ignore_suspended: bool = False):
     def decorator(func):
         @wraps(func)
         def wrapped_function(*args, **kwargs):
@@ -235,20 +233,14 @@ def log_request_info(response):
     user_id = current_user.id if current_user.is_authenticated else "N/A"
     l = f'{request.remote_addr} - - [{log_date_time_string()}] "{request.method} {request.path}" {response.status_code} - {user_id}'
 
-    if (
-        request.data
-        and len(request.data) > 0
-        and request.headers.get("Content-Type") == "application/json"
-    ):
+    if request.data and len(request.data) > 0 and request.headers.get("Content-Type") == "application/json":
         l += f"\nRequest Data: {request.data.decode()}"
 
     logger.info(l)
 
     # add some headers
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = (
-        "Content-Type, Authorization, X-API-Key"
-    )
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-API-Key"
     return response
 
 
@@ -402,9 +394,7 @@ def upload_prd():
 @authentication_required()
 def api():
     if request.method == "GET":
-        return render_template(
-            "api.html", current_user=current_user, website_version=website_version
-        )
+        return render_template("api.html", current_user=current_user, website_version=website_version)
     elif request.method == "POST":
         event_data = request.get_json()
         (
@@ -612,9 +602,7 @@ def login():
 def login_callback():
     code = request.args.get("code")
     if not code:
-        return render_template(
-            "error.html", page_title="Error", error="No code provided"
-        )
+        return render_template("error.html", page_title="Error", error="No code provided")
     token_url, headers, body = client.prepare_token_request(
         "https://discord.com/api/oauth2/token",
         authorization_response=request.url,
@@ -650,9 +638,7 @@ def login_callback():
     user_is_verified = FlaskUser.user_is_verified(client.access_token)
     if not user_is_verified:
         session.clear()
-        raise Forbidden(
-            "You must be verified to use this service. Please read the #rules channel."
-        )
+        raise Forbidden("You must be verified to use this service. Please read the #rules channel.")
     login_user(user, True)
     # flash("Welcome, {}!".format(user.username), "success")
     resp = make_response(redirect("/"))
@@ -716,9 +702,7 @@ def user_get_prds():
 # error handlers
 @app.errorhandler(DatabaseError)
 def database_error(e: Exception):
-    logger.exception(
-        e
-    )  # database errors should always be logged as they are unexpected
+    logger.exception(e)  # database errors should always be logged as they are unexpected
     if request.method == "GET":
         return (
             render_template(
@@ -809,9 +793,7 @@ class Moved(HTTPException):
 # routes that are removed
 @app.route("/upload")
 def upload():
-    raise Gone(
-        "This route is no longer available, please use /upload/prd or /upload/wvd instead"
-    )
+    raise Gone("This route is no longer available, please use /upload/prd or /upload/wvd instead")
 
 
 # routes that have been moved
