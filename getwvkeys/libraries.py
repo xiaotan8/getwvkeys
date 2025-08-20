@@ -156,7 +156,7 @@ class Library:
             # try to parse as a playready pssh
             try:
                 pssh = PlayreadyPSSH(query)
-                kids = [x.read_attributes()[0] for x in self.pssh.wrm_headers]
+                kids = [x.read_attributes()[0] for x in pssh.wrm_headers]
                 kid = kids[0][0].value
                 decoded_kid = base64.b64decode(kid)
                 query = str(uuid.UUID(bytes_le=decoded_kid))
