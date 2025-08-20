@@ -61,14 +61,10 @@ def construct_logger():
 
     # setup handlers
     # create a colored formatter for the console
-    console_formatter = ColoredFormatter(
-        config.LOG_FORMAT, datefmt=config.LOG_DATE_FORMAT
-    )
+    console_formatter = ColoredFormatter(config.LOG_FORMAT, datefmt=config.LOG_DATE_FORMAT)
 
     # create a regular non-colored formatter for the log file
-    file_formatter = logging.Formatter(
-        config.LOG_FORMAT, datefmt=config.LOG_DATE_FORMAT
-    )
+    file_formatter = logging.Formatter(config.LOG_FORMAT, datefmt=config.LOG_DATE_FORMAT)
 
     # create a handler for console logging
     stream = logging.StreamHandler()
@@ -91,9 +87,7 @@ def construct_logger():
 
 
 class CacheBase(object):
-    def __init__(
-        self, added_at: int, added_by: Union[str, None], license_url: Union[str, None]
-    ):
+    def __init__(self, added_at: int, added_by: Union[str, None], license_url: Union[str, None]):
         self.added_at = added_at
         self.added_by = added_by
         self.license_url = license_url
@@ -234,21 +228,6 @@ class Blacklist:
             if entry.matches(url):
                 return True
         return False
-
-
-def extract_widevine_kid(pssh: WidevinePSSH) -> str:
-    """
-    Extracts the KID from the Widevine PSSH object.
-    """
-    if not pssh or not pssh.key_ids or len(pssh.key_ids) == 0:
-        raise ValueError("No key ids found in the PSSH object.")
-
-    if len(pssh.key_ids) == 1:
-        return pssh.key_ids[0].hex
-    elif len(pssh.key_ids) > 1:
-        return pssh.key_ids[0].hex
-    else:
-        raise ValueError("Unexpected number of key ids in the PSSH object.")
 
 
 class DRMType(Enum):

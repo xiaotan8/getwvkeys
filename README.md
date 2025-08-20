@@ -58,3 +58,9 @@ _never use more than 1 worker, getwvkeys does not currently support that and you
 -   GetWVKeys uses dynamic injection for scripts, this means that when a user downloads a script and is logged in, the server injects certain values by replacing strings such as their API key. Available placeholders are:
     -   `__getwvkeys_api_key__`: Authenticated users api key
     -   `__getwvkeys_api_url__`: The instances API URL, this is used for staging and production mainly but can also be used for self hosted instances
+-   if you get an error when running migrations, note that your database needs to be created with:
+
+```
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_general_ci;
+```

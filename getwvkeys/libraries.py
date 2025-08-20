@@ -56,7 +56,7 @@ from getwvkeys.models.Key import Key as KeyModel
 from getwvkeys.models.PRD import PRD
 from getwvkeys.models.User import User as UserModel
 from getwvkeys.models.WVD import WVD
-from getwvkeys.utils import CachedKey, DRMType, extract_widevine_kid
+from getwvkeys.utils import CachedKey, DRMType
 
 logger = logging.getLogger("getwvkeys")
 
@@ -760,11 +760,10 @@ class Widevine(BaseService):
         self.curl = is_curl
 
         if pssh:
-            try:
-                self.kid = extract_widevine_kid(self.pssh)
-            except Exception as e:
-                logger.exception(e)
-                raise BadRequest(f"Failed to extract KID from PSSH: {e}")
+            if self.pssh.key_ids and len(self.pssh.key_ids) > 0:
+                self.kid = self.pssh.key_ids[0].hex
+            else:
+                self.force = True
 
     @staticmethod
     def post_data(license_url, headers, data, proxy):
