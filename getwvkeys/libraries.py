@@ -164,7 +164,9 @@ class Library:
                 # try to parse as widevine pssh
                 try:
                     pssh = WidevinePSSH(query)
-                    query = extract_widevine_kid(pssh)
+                    if not pssh.key_ids or len(pssh.key_ids) == 0:
+                        raise BadRequest("Invalid PSSH: No key IDs found")
+                    query = pssh.key_ids[0].hex
                 except Exception as e:
                     logger.exception(e)
                     raise BadRequest(f"Invalid PSSH: {e}")
