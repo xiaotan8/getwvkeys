@@ -65,6 +65,8 @@ from getwvkeys import config, libraries
 from getwvkeys.models.Shared import db
 from getwvkeys.models.TrafficLog import TrafficLog
 from getwvkeys.redis import Redis
+from getwvkeys.services.PlayReady import PlayReady
+from getwvkeys.services.Widevine import Widevine
 from getwvkeys.user import FlaskUser
 from getwvkeys.utils import Blacklist, DRMType, UserFlags, Validators, construct_logger
 
@@ -453,7 +455,7 @@ def api():
             logger.debug(f"[DEBUG] Detected DRM type from device hash: {drm_type}")
 
         if drm_type.is_widevine():
-            service = libraries.Widevine(
+            service = Widevine(
                 library=library,
                 proxy=proxy,
                 license_url=license_url,
@@ -469,7 +471,7 @@ def api():
                 is_curl=is_curl,
             )
         elif drm_type.is_playready():
-            service = libraries.PlayReady(
+            service = PlayReady(
                 library=library,
                 proxy=proxy,
                 license_url=license_url,
