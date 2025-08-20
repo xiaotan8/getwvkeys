@@ -160,7 +160,7 @@ class Library:
                 kid = kids[0][0].value
                 decoded_kid = base64.b64decode(kid)
                 query = str(uuid.UUID(bytes_le=decoded_kid))
-            except PlayreadyInvalidPssh:
+            except Exception:
                 # try to parse as widevine pssh
                 try:
                     pssh = WidevinePSSH(query)
