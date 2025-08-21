@@ -218,7 +218,7 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
-        "--device", "-d", default="", help="Device Hash", required=False
+        "--device", "-d", dest="device_hash", default="", help="Device Hash", required=False
     )
     parser.add_argument(
         "--version", "-V", help="Print version and exit", action="store_true"
