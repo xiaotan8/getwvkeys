@@ -832,6 +832,16 @@ def dev():
     )
 
 
+@app.route("/pywidevine", methods=["GET", "POST"])
+def pywidevine():
+    return redirect("/api", 307)
+
+
+@app.route("/wv", methods=["GET", "POST"])
+def wv():
+    return redirect("/api", 307)
+
+
 @app.route("/download/<file>")
 def downloadfile_old(file):
     return redirect("/scripts/{}".format(file), 301)
