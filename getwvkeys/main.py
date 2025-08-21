@@ -161,6 +161,102 @@ def authentication_required(exempt_methods=[], flags_required: int = None, ignor
     return decorator
 
 
+# require and validate cdm id for remote cdm operations
+def remotecdm_validate_cdmid():
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(cdm_id, *args, **kwargs):
+            cdm_id = cdm_id.lower()
+            if cdm_id not in ["widevine", "playready"]:
+                return (
+                    jsonify(
+                        {
+                            "status": 400,
+                            "message": "Invalid CDM ID.",
+                        }
+                    ),
+                    400,
+                )
+            return func(cdm_id, *args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
+# require and validate api key for remote cdm operations
+def remotecdm_authentication_required(exempt_methods=[]):
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(*args, **kwargs):
+            if request.method in exempt_methods:
+                return func(*args, **kwargs)
+
+            # handle api keys
+            if not current_user.is_authenticated:
+                # check if they passed in an api key
+                api_key = request.headers.get("X-Secret-Key")
+                if not api_key:
+                    raise Unauthorized("API Key Required")
+
+                # check if the key is a valid user key
+                user = FlaskUser.get_user_by_api_key(db, api_key)
+
+                if not user:
+                    raise Forbidden("Invalid API Key")
+
+                login_user(user, remember=False)
+
+            # check if the user is enabled
+            current_user.check_status()
+
+            return func(*args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
+# only allow specified cdm ids to use an operation
+def remotecdm_require_cdmids(cdm_ids=[]):
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(cdm_id, *args, **kwargs):
+            if cdm_id not in cdm_ids:
+                return (
+                    jsonify(
+                        {
+                            "status": 400,
+                            "message": f"Unsupported operation for specified CDM id",
+                        }
+                    ),
+                    400,
+                )
+            return func(cdm_id, *args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
+# decorator that takes a list of required body keys and validates they exist
+def ensure_body_keys(required_keys=[]):
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(*args, **kwargs):
+            event_data = request.get_json()
+            if not event_data:
+                raise BadRequest("Missing Body")
+            for key in required_keys:
+                if key not in event_data:
+                    raise BadRequest(f"Missing Field: {key}")
+            return func(*args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
 def on_json_loading_failed(self, e):
     raise UnsupportedMediaType()
 
@@ -493,6 +589,112 @@ def api():
             raise BadRequest("Unable to determine DRM type from PSSH or device hash")
 
         return service.run()
+
+
+@app.route("/api/remotecdm")
+def remote_cdm_ping():
+    return jsonify({"status": 200, "message": "pong"})
+
+
+@app.route("/api/remotecdm/<cdm_id>", methods=["GET"])
+@remotecdm_validate_cdmid()
+def remote_cdm_config(cdm_id: str):
+    if cdm_id == "widevine":
+        return jsonify(
+            {
+                "device_name": "getwvkeys",
+                "device_type": "ANDROID",  # not used
+                "host": config.API_URL + "/api/remotecdm/widevine",
+                "secret": current_user.api_key if current_user.is_authenticated else "getwvkeys",
+                "security_level": 99,  # not used
+                "system_id": 9999,  # not used
+            }
+        )
+    else:
+        return jsonify(
+            {
+                "device_name": "getwvkeys",
+                "host": config.API_URL + "/api/remotecdm/playready",
+                "secret": current_user.api_key if current_user.is_authenticated else "getwvkeys",
+                "security_level": "999",  # not used
+            }
+        )
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/open", methods=["GET"])
+# @remotecdm_authentication_required()
+@remotecdm_validate_cdmid()
+def remote_cdm_open(cdm_id: str, device_name: str):
+    return library.remote_cdm_open(cdm_id, device_name)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/close/<session_id>", methods=["GET"])
+# @remotecdm_authentication_required()
+@remotecdm_validate_cdmid()
+def remote_cdm_close(cdm_id: str, device_name: str, session_id: str):
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_close(cdm_id, device_name, session_id)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/set_service_certificate", methods=["POST"])
+# @remotecdm_authentication_required()
+@remotecdm_validate_cdmid()
+@remotecdm_require_cdmids(cdm_ids=["widevine"])
+@ensure_body_keys(required_keys=["session_id", "certificate"])
+def remote_cdm_set_service_certificate(cdm_id: str, device_name: str):
+
+    event_data = request.get_json()
+    (session_id, certificate) = (event_data["session_id"], event_data["certificate"])
+
+    session_id = bytes.fromhex(session_id)
+
+    return library.remote_cdm_set_service_certificate(cdm_id, device_name, session_id, certificate)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_service_certificate", methods=["POST"])
+# @remotecdm_authentication_required()
+@remotecdm_validate_cdmid()
+@remotecdm_require_cdmids(cdm_ids=["widevine"])
+@ensure_body_keys(required_keys=["session_id"])
+def remote_cdm_get_service_certificate(cdm_id: str, device_name: str):
+    event_data = request.get_json()
+    session_id = event_data["session_id"]
+    session_id = bytes.fromhex(session_id)
+
+    return library.remote_cdm_get_service_certificate(cdm_id, device_name, session_id)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_license_challenge/<license_type>", methods=["POST"])
+# @remotecdm_authentication_required()
+@remotecdm_validate_cdmid()
+@ensure_body_keys(required_keys=["session_id", "init_data"])
+def remote_cdm_license_challenge(cdm_id: str, device_name: str, license_type: str):
+    event_data = request.get_json()
+    (session_id, init_data) = (event_data["session_id"], event_data["init_data"])
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_license_challenge(cdm_id, device_name, license_type, session_id, init_data)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/parse_license", methods=["POST"])
+# @remotecdm_authentication_required()
+@remotecdm_validate_cdmid()
+@ensure_body_keys(required_keys=["session_id", "license_message"])
+def remote_cdm_parse_license(cdm_id: str, device_name: str):
+    event_data = request.get_json()
+    (session_id, license_message) = (event_data["session_id"], event_data["license_message"])
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_parse_license(cdm_id, device_name, session_id, license_message)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_keys/<key_type>", methods=["POST"])
+# @remotecdm_authentication_required()
+@remotecdm_validate_cdmid()
+@ensure_body_keys(required_keys=["session_id"])
+def remote_cdm_get_keys(cdm_id: str, device_name: str, key_type: str):
+    event_data = request.get_json()
+    session_id = event_data["session_id"]
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_get_keys(cdm_id, device_name, key_type, session_id)
 
 
 # @app.route("/vinetrimmer", methods=["POST"])

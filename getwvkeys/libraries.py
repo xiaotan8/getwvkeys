@@ -26,14 +26,25 @@ from urllib.parse import urlsplit
 
 from flask import jsonify
 from flask_sqlalchemy import SQLAlchemy
+from google.protobuf.message import DecodeError
 from pyplayready import PSSH as PlayreadyPSSH
 from pyplayready import Cdm as PlayreadyCdm
 from pyplayready import Device as PlayreadyDevice
 from pyplayready.exceptions import InvalidInitData as PlayreadyInvalidInitData
+from pyplayready.exceptions import InvalidLicense as PlayreadyInvalidLicense
 from pyplayready.exceptions import InvalidPssh as PlayreadyInvalidPssh
+from pyplayready.exceptions import InvalidSession as PlayReadyInvalidSession
+from pyplayready.exceptions import TooManySessions as PlayReadyTooManySessions
 from pywidevine import PSSH as WidevinePSSH
 from pywidevine import Cdm as WidevineCdm
 from pywidevine import Device as WidevineDevice
+from pywidevine.exceptions import InvalidContext as WidevineInvalidContext
+from pywidevine.exceptions import InvalidInitData as WidevineInvalidInitData
+from pywidevine.exceptions import InvalidLicenseMessage as WidevineInvalidLicenseMessage
+from pywidevine.exceptions import InvalidLicenseType as WidevineInvalidLicenseType
+from pywidevine.exceptions import InvalidSession as WidevineInvalidSession
+from pywidevine.exceptions import SignatureMismatch as WidevineSignatureMismatch
+from pywidevine.exceptions import TooManySessions as WidevineTooManySessions
 from sqlalchemy import func, text
 from werkzeug.exceptions import BadRequest
 
@@ -44,6 +55,10 @@ from getwvkeys.models.PRD import PRD
 from getwvkeys.models.User import User as UserModel
 from getwvkeys.models.WVD import WVD
 from getwvkeys.utils import CachedKey, DRMType
+
+# set the custom max session count
+PlayreadyCdm.MAX_NUM_OF_SESSIONS = config.MAX_SESSIONS
+WidevineCdm.MAX_NUM_OF_SESSIONS = config.MAX_SESSIONS
 
 logger = logging.getLogger("getwvkeys")
 
@@ -347,3 +362,337 @@ class Library:
 
     def get_wvd_by_hash(self, hash: str):
         return WVD.query.filter_by(hash=hash).first()
+
+    def remote_cdm_get_device(
+        self, device_name: str, get_random_fn: callable
+    ) -> Union[WidevineDevice, PlayreadyDevice]:
+        device = None
+
+        if device_name == "getwvkeys":
+            device_name = get_random_fn()
+            device = self.get_device_by_hash(device_name)
+        else:
+            device = self.get_device_by_hash(device_name)
+
+        if not device:
+            raise Exception(f"Device '{device_name}' not found")
+
+        if isinstance(device, PRD):
+            return PlayreadyDevice.loads(device.prd)
+        elif isinstance(device, WVD):
+            return WidevineDevice.loads(device.wvd)
+
+        raise BadRequest("invalid device type")
+
+    def remote_cdm_get_keys_impl(self, cdm: Union[WidevineCdm, PlayreadyCdm], session_id: bytes, key_type: str):
+        if isinstance(cdm, WidevineCdm):
+            if key_type == "ALL":
+                key_type = None
+            keys = cdm.get_keys(session_id, key_type)
+            keys_json = [
+                {
+                    "key_id": key.kid.hex,
+                    "key": key.key.hex(),
+                    "type": key.type,
+                    "permissions": key.permissions,
+                }
+                for key in keys
+                if not key_type or key.type == key_type
+            ]
+            return keys_json
+
+        elif isinstance(cdm, PlayreadyCdm):
+            keys = cdm.get_keys(session_id)
+
+            keys_json = [
+                {
+                    "key_id": key.key_id.hex,
+                    "key": key.key.hex(),
+                    "type": key.key_type.value,
+                    "cipher_type": key.cipher_type.value,
+                    "key_length": key.key_length,
+                }
+                for key in keys
+            ]
+
+            return keys_json
+
+    def remote_cdm_open_session(
+        self, device: Union[WidevineDevice, PlayreadyDevice], cdm_class: Union[WidevineCdm, PlayreadyCdm]
+    ):
+        cdm = cdm_class.from_device(device)
+        session_id = cdm.open()
+        session_id = session_id.hex()
+        # store the session
+        sessions[session_id] = cdm
+
+        return session_id
+
+    def remote_cdm_parse_init_data(self, cdm_id: str, init_data: str) -> Union[WidevinePSSH, PlayreadyPSSH]:
+        if cdm_id == "widevine":
+            return WidevinePSSH(init_data)
+        else:
+            return PlayreadyPSSH(init_data)
+
+    def remote_cdm_get_challenge(
+        self, cdm: Union[WidevineCdm, PlayreadyCdm], session_id: bytes, init_data: str, license_type: str
+    ):
+        if isinstance(cdm, WidevineCdm):
+            pssh = WidevinePSSH(init_data)
+            challenge = cdm.get_license_challenge(
+                session_id=session_id, pssh=pssh, license_type=license_type, privacy_mode=True
+            )
+            return jsonify(
+                {"status": 200, "message": "Success", "data": {"challenge_b64": base64.b64encode(challenge).decode()}}
+            )
+        elif isinstance(cdm, PlayreadyCdm):
+            if not init_data.startswith("<WRMHEADER"):
+                pssh = PlayreadyPSSH(init_data)
+                if pssh.wrm_headers:
+                    init_data = pssh.wrm_headers[0]
+                    challenge = cdm.get_license_challenge(
+                        session_id=session_id,
+                        wrm_header=init_data,
+                    )
+
+                    return jsonify({"status": 200, "message": "Success", "data": {"challenge": challenge}})
+
+        raise BadRequest("Invalid cdm")
+
+    def remote_cdm_open(self, cdm_id: str, device_name: str):
+        try:
+            if cdm_id == "widevine":
+                device = self.remote_cdm_get_device(device_name, get_random_wvd)
+                session_id = self.remote_cdm_open_session(device, WidevineCdm)
+            else:
+                device = self.remote_cdm_get_device(device_name, get_random_prd)
+                session_id = self.remote_cdm_open_session(device, PlayreadyCdm)
+        except (WidevineTooManySessions, PlayReadyTooManySessions):
+            return (
+                jsonify(
+                    {
+                        "status": 429,
+                        "message": "Too many sessions for this device. Please try again later.",
+                    }
+                ),
+                429,
+            )
+        except Exception as e:
+            logger.exception(e)
+            return (
+                jsonify(
+                    {
+                        "status": 500,
+                        "message": str(e),
+                    }
+                ),
+                500,
+            )
+
+        return jsonify(
+            {
+                "status": 200,
+                "message": "Success",
+                "data": {
+                    "session_id": session_id,
+                    "device": {"system_id": 666, "security_level": device.security_level},
+                },
+            }
+        )
+
+    def remote_cdm_close(self, cdm_id: str, device_name: str, session_id: bytes):
+        cdm = sessions.get(session_id.hex())
+        if not cdm:
+            return (
+                jsonify(
+                    {
+                        "status": 404,
+                        "message": f"Session '{session_id}' not found.",
+                    }
+                ),
+                404,
+            )
+
+        try:
+            cdm.close(session_id)
+        except (WidevineInvalidSession, PlayReadyInvalidSession):
+            return (
+                jsonify(
+                    {
+                        "status": 400,
+                        "message": f"Invalid Session ID '{session_id.hex()}', it may have expired.",
+                    }
+                ),
+                400,
+            )
+        return jsonify({"status": 200, "message": f"Successfully closed Session '{session_id.hex()}'."})
+
+    def remote_cdm_set_service_certificate(self, cdm_id: str, device_name: str, session_id: bytes, certificate: str):
+        cdm = sessions.get(session_id.hex())
+        if not cdm:
+            return (
+                jsonify(
+                    {
+                        "status": 404,
+                        "message": f"Session '{session_id}' not found.",
+                    }
+                ),
+                404,
+            )
+
+        try:
+            provider_id = cdm.set_service_certificate(session_id, certificate)
+        except WidevineInvalidSession:
+            return (
+                jsonify({"status": 400, "message": f"Invalid Session ID '{session_id.hex()}', it may have expired."}),
+                400,
+            )
+        except DecodeError as e:
+            return (
+                jsonify({"status": 400, "message": f"Invalid Service Certificate: {e}"}),
+                400,
+            )
+        except WidevineSignatureMismatch:
+            return (jsonify({"status": 400, "message": "Signature Validation failed on the Service Certificate"}), 400)
+
+        return jsonify(
+            {
+                "status": 200,
+                "message": f"Successfully {['set', 'unset'][not certificate]} the Service Certificate.",
+                "data": {"provider_id": provider_id},
+            }
+        )
+
+    def remote_cdm_get_service_certificate(self, cdm_id: str, device_name: str, session_id: bytes):
+        cdm = sessions.get(session_id.hex())
+        if not cdm:
+            return (
+                jsonify(
+                    {
+                        "status": 404,
+                        "message": f"Session '{session_id}' not found.",
+                    }
+                ),
+                404,
+            )
+
+        try:
+            certificate = cdm.get_service_certificate(session_id)
+        except WidevineInvalidSession:
+            return (
+                jsonify({"status": 400, "message": f"Invalid Session ID '{session_id.hex()}', it may have expired."}),
+                400,
+            )
+
+        certificate_b64 = None
+        if certificate:
+            certificate_b64 = base64.b64encode(certificate.SerializeToString()).decode()
+
+        return jsonify(
+            {
+                "status": 200,
+                "message": "Successfully got the Service Certificate.",
+                "data": {"service_certificate": certificate_b64},
+            }
+        )
+
+    def remote_cdm_license_challenge(
+        self, cdm_id: str, device_name: str, license_type: str, session_id: str, init_data: str
+    ):
+        cdm = sessions.get(session_id.hex())
+        if not cdm:
+            return (
+                jsonify(
+                    {
+                        "status": 404,
+                        "message": f"Session '{session_id}' not found.",
+                    }
+                ),
+                404,
+            )
+
+        # TODO: enforce privacy mode option?
+
+        try:
+            return self.remote_cdm_get_challenge(cdm, session_id, init_data, license_type)
+        except (PlayreadyInvalidPssh, PlayreadyInvalidInitData, WidevineInvalidInitData) as e:
+            return jsonify(
+                {
+                    "status": 400,
+                    "message": f"Unable to parse base64 PSSH: {str(e)}",
+                }
+            )
+        except (WidevineInvalidSession, PlayReadyInvalidSession):
+            return (
+                jsonify({"status": 400, "message": f"Invalid Session ID '{session_id.hex()}', it may have expired."}),
+                400,
+            )
+        except WidevineInvalidLicenseType:
+            return (
+                jsonify({"status": 400, "message": f"Invalid License Type '{license_type}'."}),
+                400,
+            )
+
+    def remote_cdm_parse_license(self, cdm_id: str, device_name: str, session_id: bytes, license_message: str):
+        cdm = sessions.get(session_id.hex())
+        if not cdm:
+            return (
+                jsonify(
+                    {
+                        "status": 404,
+                        "message": f"Session '{session_id}' not found.",
+                    }
+                ),
+                404,
+            )
+
+        try:
+            cdm.parse_license(session_id, license_message)
+        except (WidevineInvalidSession, PlayReadyInvalidSession):
+            return (
+                jsonify({"status": 400, "message": f"Invalid Session ID '{session_id.hex()}', it may have expired."}),
+                400,
+            )
+        except (WidevineInvalidLicenseMessage, PlayreadyInvalidLicense) as e:
+            return (
+                jsonify({"status": 400, "message": f"Invalid License: {e}"}),
+                400,
+            )
+        except WidevineInvalidContext as e:
+            return (
+                jsonify({"status": 400, "message": f"Invalid Context: {e}"}),
+                400,
+            )
+        except WidevineSignatureMismatch:
+            return (
+                jsonify({"status": 400, "message": "Signature Validation failed on the License message"}),
+                400,
+            )
+        return jsonify({"status": 200, "message": "Successfully parsed and loaded the Keys from the License message."})
+
+    def remote_cdm_get_keys(self, cdm_id: str, device_name: str, key_type: str, session_id: bytes):
+        cdm = sessions.get(session_id.hex())
+        if not cdm:
+            return (
+                jsonify(
+                    {
+                        "status": 404,
+                        "message": f"Session '{session_id}' not found.",
+                    }
+                ),
+                404,
+            )
+
+        try:
+            keys = self.remote_cdm_get_keys_impl(cdm, session_id, key_type)
+            return jsonify({"status": 200, "message": "Success", "data": {"keys": keys}})
+        except (WidevineInvalidSession, PlayReadyInvalidSession):
+            return (
+                jsonify({"status": 400, "message": f"Invalid Session ID '{session_id.hex()}', it may have expired."}),
+                400,
+            )
+        except ValueError as e:
+            return (
+                jsonify({"status": 400, "message": f"Invalid Key Type '{key_type}': {e}"}),
+                400,
+            )
