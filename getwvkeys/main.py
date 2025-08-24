@@ -664,11 +664,12 @@ def remote_cdm_get_service_certificate(cdm_id: str, device_name: str):
     return library.remote_cdm_get_service_certificate(cdm_id, device_name, session_id)
 
 
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_license_challenge", methods=["POST"])
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/get_license_challenge/<license_type>", methods=["POST"])
 # @remotecdm_authentication_required()
 @remotecdm_validate_cdmid()
 @ensure_body_keys(required_keys=["session_id", "init_data"])
-def remote_cdm_license_challenge(cdm_id: str, device_name: str, license_type: str):
+def remote_cdm_license_challenge(cdm_id: str, device_name: str, license_type: str = "STREAMING"):
     event_data = request.get_json()
     (session_id, init_data) = (event_data["session_id"], event_data["init_data"])
     session_id = bytes.fromhex(session_id)
