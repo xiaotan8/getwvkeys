@@ -687,11 +687,12 @@ def remote_cdm_parse_license(cdm_id: str, device_name: str):
     return library.remote_cdm_parse_license(cdm_id, device_name, session_id, license_message)
 
 
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_keys", methods=["POST"])
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/get_keys/<key_type>", methods=["POST"])
 # @remotecdm_authentication_required()
 @remotecdm_validate_cdmid()
 @ensure_body_keys(required_keys=["session_id"])
-def remote_cdm_get_keys(cdm_id: str, device_name: str, key_type: str):
+def remote_cdm_get_keys(cdm_id: str, device_name: str, key_type: str = "STREAMING"):
     event_data = request.get_json()
     session_id = event_data["session_id"]
     session_id = bytes.fromhex(session_id)
