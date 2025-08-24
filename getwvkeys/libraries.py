@@ -447,15 +447,18 @@ class Library:
             )
         elif isinstance(cdm, PlayreadyCdm):
             if not init_data.startswith("<WRMHEADER"):
-                pssh = PlayreadyPSSH(init_data)
-                if pssh.wrm_headers:
-                    init_data = pssh.wrm_headers[0]
-                    challenge = cdm.get_license_challenge(
-                        session_id=session_id,
-                        wrm_header=init_data,
-                    )
+                try:
+                    pssh = PlayreadyPSSH(init_data)
+                    if pssh.wrm_headers:
+                        init_data = pssh.wrm_headers[0]
+                except PlayreadyInvalidPssh as e:
+                    return jsonify({"status": 500, "message": f"Unable to parse PSSH: {e}"})
+            challenge = cdm.get_license_challenge(
+                session_id=session_id,
+                wrm_header=init_data,
+            )
 
-                    return jsonify({"status": 200, "message": "Success", "data": {"challenge": challenge}})
+            return jsonify({"status": 200, "message": "Success", "data": {"challenge": challenge}})
 
         raise BadRequest("Invalid cdm")
 
