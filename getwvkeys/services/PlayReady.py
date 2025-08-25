@@ -214,9 +214,8 @@ class PlayReady(BaseService):
                 raise InternalServerError("[PlayReady] Too many open sessions, please try again in a few minutes")
 
             try:
-                wrm_headers = self.pssh.get_wrm_headers(self.downgrade)
                 license_request = cdm.get_license_challenge(
-                    session_id=bytes.fromhex(self.session_id), wrm_header=wrm_headers
+                    session_id=bytes.fromhex(self.session_id), wrm_header=self.pssh.wrm_headers[0]
                 )
             except PlayreadyInvalidInitData as e:
                 logger.exception(e)
