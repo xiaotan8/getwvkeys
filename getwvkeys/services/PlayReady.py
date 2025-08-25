@@ -10,11 +10,11 @@ from flask import jsonify, render_template
 from pyplayready import PSSH as PlayreadyPSSH
 from pyplayready import Cdm as PlayreadyCdm
 from pyplayready import Device as PlayreadyDevice
-from pyplayready.exceptions import InvalidInitData as PlayreadyInvalidInitData
-from pyplayready.exceptions import InvalidLicense as PlayreadyInvalidLicense
-from pyplayready.exceptions import InvalidPssh as PlayreadyInvalidPssh
-from pyplayready.exceptions import InvalidSession as PlayreadyInvalidSession
-from pyplayready.exceptions import TooManySessions as PlayreadyTooManySessions
+from pyplayready import InvalidInitData as PlayreadyInvalidInitData
+from pyplayready import InvalidLicense as PlayreadyInvalidLicense
+from pyplayready import InvalidPssh as PlayreadyInvalidPssh
+from pyplayready import InvalidSession as PlayreadyInvalidSession
+from pyplayready import TooManySessions as PlayreadyTooManySessions
 from requests.exceptions import ProxyError
 from werkzeug.exceptions import BadRequest, InternalServerError
 

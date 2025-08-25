@@ -30,11 +30,11 @@ from google.protobuf.message import DecodeError
 from pyplayready import PSSH as PlayreadyPSSH
 from pyplayready import Cdm as PlayreadyCdm
 from pyplayready import Device as PlayreadyDevice
-from pyplayready.exceptions import InvalidInitData as PlayreadyInvalidInitData
-from pyplayready.exceptions import InvalidLicense as PlayreadyInvalidLicense
-from pyplayready.exceptions import InvalidPssh as PlayreadyInvalidPssh
-from pyplayready.exceptions import InvalidSession as PlayReadyInvalidSession
-from pyplayready.exceptions import TooManySessions as PlayReadyTooManySessions
+from pyplayready import InvalidInitData as PlayreadyInvalidInitData
+from pyplayready import InvalidLicense as PlayreadyInvalidLicense
+from pyplayready import InvalidPssh as PlayreadyInvalidPssh
+from pyplayready import InvalidSession as PlayReadyInvalidSession
+from pyplayready import TooManySessions as PlayReadyTooManySessions
 from pywidevine import PSSH as WidevinePSSH
 from pywidevine import Cdm as WidevineCdm
 from pywidevine import Device as WidevineDevice
