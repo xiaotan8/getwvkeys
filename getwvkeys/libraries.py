@@ -673,7 +673,9 @@ class Library:
             )
         return jsonify({"status": 200, "message": "Successfully parsed and loaded the Keys from the License message."})
 
-    def remote_cdm_get_keys(self, cdm_id: str, device_name: str, key_type: str, session_id: bytes):
+    def remote_cdm_get_keys(
+        self, cdm_id: str, device_name: str, key_type: str, session_id: bytes, user_id: Union[str, None]
+    ):
         cdm = sessions.get(session_id.hex())
         if not cdm:
             return (
@@ -688,6 +690,18 @@ class Library:
 
         try:
             keys = self.remote_cdm_get_keys_impl(cdm, session_id, key_type)
+            self.cache_keys(
+                [
+                    CachedKey(
+                        key["key_id"],
+                        int(time.time()),
+                        user_id if user_id != None else "remote_cdm",
+                        "http://REMOTECDM.local",
+                        key["key"],
+                    )
+                    for key in keys
+                ]
+            )
             return jsonify({"status": 200, "message": "Success", "data": {"keys": keys}})
         except (WidevineInvalidSession, PlayReadyInvalidSession):
             return (

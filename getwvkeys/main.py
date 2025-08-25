@@ -696,7 +696,7 @@ def remote_cdm_get_keys(cdm_id: str, device_name: str, key_type: str = "STREAMIN
     event_data = request.get_json()
     session_id = event_data["session_id"]
     session_id = bytes.fromhex(session_id)
-    return library.remote_cdm_get_keys(cdm_id, device_name, key_type, session_id)
+    return library.remote_cdm_get_keys(cdm_id, device_name, key_type, session_id, current_user.id)
 
 
 # @app.route("/vinetrimmer", methods=["POST"])
