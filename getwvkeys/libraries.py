@@ -695,7 +695,7 @@ class Library:
                     CachedKey(
                         key["key_id"],
                         int(time.time()),
-                        user_id if user_id != None else "remote_cdm",
+                        user_id,
                         "http://REMOTECDM.local",
                         key["key"],
                     )
