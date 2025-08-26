@@ -101,7 +101,7 @@ class Redis:
                         )
             elif op == OPCode.KEY_COUNT.value:
                 with self.app.app_context():
-                    self.publish_response(reply_to, self.library.get_keycount())
+                    self.publish_response(reply_to, self.library.get_keycount_approx())
             elif op == OPCode.USER_COUNT.value:
                 with self.app.app_context():
                     self.publish_response(reply_to, FlaskUser.get_user_count())
