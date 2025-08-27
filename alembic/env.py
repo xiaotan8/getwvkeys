@@ -11,12 +11,12 @@ from getwvkeys.models import (
     APIKey,
     Base,
     Key,
+    KeyCount,
     Shared,
     TrafficLog,
     User,
     UserPRD,
     UserWVD,
-    KeyCount
 )
 
 IS_DEVELOPMENT = bool(os.environ.get("DEVELOPMENT", False))
