@@ -97,14 +97,16 @@ library = libraries.Library(db)
 # create validators instance
 validators = Validators()
 
+CACHE_TIME = 30 * 60  # seconds
+
 
 # Background task for updating key count cache
 def update_key_count_cache_periodically():
     while True:
         try:
-            time.sleep(3600)
+            time.sleep(CACHE_TIME)
             with app.app_context():
-                if library.should_refresh_cache(max_age_seconds=3600):
+                if library.should_refresh_cache(max_age_seconds=CACHE_TIME):
                     library.update_cached_keycount()
                     logger.info("Background task: Key count cache updated")
         except Exception as e:
