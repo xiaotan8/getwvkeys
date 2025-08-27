@@ -51,6 +51,7 @@ from werkzeug.exceptions import BadRequest
 from getwvkeys import config
 from getwvkeys.models.APIKey import APIKey as APIKeyModel
 from getwvkeys.models.Key import Key as KeyModel
+from getwvkeys.models.KeyCount import KeyCount as KeyCountModel
 from getwvkeys.models.PRD import PRD
 from getwvkeys.models.User import User as UserModel
 from getwvkeys.models.WVD import WVD
@@ -117,13 +118,21 @@ class Library:
         self.db = db
 
     def cache_keys(self, cached_keys: list[CachedKey]):
+        added_count = 0
         for cached_key in cached_keys:
-            self.cache_key(cached_key)
+            if self.cache_key(cached_key):
+                added_count += 1
+
+        # Increment the cached count by the total number of added keys
+        if added_count > 0:
+            self.increment_cached_keycount(added_count)
+
+        return added_count
 
     def cache_key(self, cached_key: CachedKey):
         # do not add existing kid and key_ pairs
         if KeyModel.query.filter_by(kid=cached_key.kid, key_=cached_key.key).first():
-            return
+            return False  # Return False if key already exists
         k = KeyModel(
             kid=cached_key.kid,
             added_at=cached_key.added_at,
@@ -133,6 +142,7 @@ class Library:
         )
         self.db.session.merge(k)
         self.db.session.commit()
+        return True  # Return True if key was added
 
     def get_keycount_approx(self):
         sql = text(
@@ -150,6 +160,54 @@ class Library:
             },
         ).scalar()
         return result or 0
+
+    def get_cached_keycount(self):
+        """Get the cached key count from the database"""
+        cache_entry = KeyCountModel.query.first()
+        if not cache_entry:
+            # Initialize cache if it doesn't exist
+            self.update_cached_keycount()
+            cache_entry = KeyCountModel.query.first()
+        return cache_entry.count_value if cache_entry else 0
+
+    def update_cached_keycount(self):
+        """Update the cached key count with the current actual count"""
+        actual_count = KeyModel.query.count()
+        cache_entry = KeyCountModel.query.first()
+
+        if cache_entry:
+            cache_entry.count_value = actual_count
+            cache_entry.last_updated = int(time.time())
+        else:
+            cache_entry = KeyCountModel(count_value=actual_count, last_updated=int(time.time()))
+            self.db.session.add(cache_entry)
+
+        self.db.session.commit()
+        logger.info(f"Updated cached key count to {actual_count}")
+
+    def increment_cached_keycount(self, increment=1):
+        """Increment the cached key count by the specified amount"""
+        cache_entry = KeyCountModel.query.first()
+
+        if cache_entry:
+            cache_entry.count_value += increment
+            cache_entry.last_updated = int(time.time())
+        else:
+            # Initialize cache if it doesn't exist
+            self.update_cached_keycount()
+            return
+
+        self.db.session.commit()
+
+    def should_refresh_cache(self, max_age_seconds=3600):
+        """Check if the cache should be refreshed based on age"""
+        cache_entry = KeyCountModel.query.first()
+        if not cache_entry:
+            return True
+
+        current_time = int(time.time())
+        age = current_time - cache_entry.last_updated
+        return age > max_age_seconds
 
     def search(self, query: str) -> list:
         if query.startswith("AAAA"):

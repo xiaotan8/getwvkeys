@@ -16,6 +16,7 @@ from getwvkeys.models import (
     User,
     UserPRD,
     UserWVD,
+    KeyCount
 )
 
 IS_DEVELOPMENT = bool(os.environ.get("DEVELOPMENT", False))

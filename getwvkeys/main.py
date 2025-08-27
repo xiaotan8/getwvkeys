@@ -19,6 +19,7 @@ import base64
 import json
 import os
 import pathlib
+import threading
 import time
 from datetime import datetime, timezone
 from functools import update_wrapper, wraps
@@ -95,6 +96,25 @@ library = libraries.Library(db)
 
 # create validators instance
 validators = Validators()
+
+
+# Background task for updating key count cache
+def update_key_count_cache_periodically():
+    while True:
+        try:
+            time.sleep(3600)
+            with app.app_context():
+                if library.should_refresh_cache(max_age_seconds=3600):
+                    library.update_cached_keycount()
+                    logger.info("Background task: Key count cache updated")
+        except Exception as e:
+            logger.error(f"Background task error: {e}")
+
+
+# Start background task in a daemon thread
+cache_update_thread = threading.Thread(target=update_key_count_cache_periodically, daemon=True)
+cache_update_thread.start()
+logger.info("Started background key count cache update task")
 
 # initialize redis instance
 if not config.IS_STAGING and config.REDIS_URI is not None:
@@ -404,7 +424,11 @@ def download_wv_script(file):
 @app.route("/count")
 @cache.cached(timeout=300)
 def count():
-    return str(library.get_keycount_approx())
+    # Check if cache should be refreshed (older than 1 hour)
+    if library.should_refresh_cache(max_age_seconds=3600):
+        library.update_cached_keycount()
+
+    return str(library.get_cached_keycount())
 
 
 @app.route("/favicon.ico")
@@ -696,7 +720,9 @@ def remote_cdm_get_keys(cdm_id: str, device_name: str, key_type: str = "STREAMIN
     event_data = request.get_json()
     session_id = event_data["session_id"]
     session_id = bytes.fromhex(session_id)
-    return library.remote_cdm_get_keys(cdm_id, device_name, key_type, session_id, current_user.id if current_user.is_authenticated else None)
+    return library.remote_cdm_get_keys(
+        cdm_id, device_name, key_type, session_id, current_user.id if current_user.is_authenticated else None
+    )
 
 
 # @app.route("/vinetrimmer", methods=["POST"])
@@ -1064,6 +1090,17 @@ def user_get_cdms():
 
 
 def main():
+    # Initialize key count cache on startup
+    with app.app_context():
+        try:
+            # Check if cache exists, if not initialize it
+            if not library.get_cached_keycount():
+                logger.info("Initializing key count cache on startup...")
+                library.update_cached_keycount()
+                logger.info(f"Key count cache initialized with {library.get_cached_keycount()} keys")
+        except Exception as e:
+            logger.error(f"Failed to initialize key count cache: {e}")
+
     app.run(
         config.API_HOST,
         config.API_PORT,
