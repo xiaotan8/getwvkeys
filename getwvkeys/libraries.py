@@ -628,10 +628,10 @@ class Library:
     def remote_cdm_open(self, cdm_id: str, device_name: str):
         try:
             if cdm_id == "widevine":
-                device = self.remote_cdm_get_device(device_name, get_random_wvd)
+                device = self.remote_cdm_get_device(device_name, self.get_random_wvd)
                 session_id = self.remote_cdm_open_session(device, WidevineCdm)
             else:
-                device = self.remote_cdm_get_device(device_name, get_random_prd)
+                device = self.remote_cdm_get_device(device_name, self.get_random_prd)
                 session_id = self.remote_cdm_open_session(device, PlayreadyCdm)
         except (WidevineTooManySessions, PlayReadyTooManySessions):
             return (
