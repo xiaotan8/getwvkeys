@@ -55,6 +55,7 @@ from getwvkeys.models.KeyCount import KeyCount as KeyCountModel
 from getwvkeys.models.PRD import PRD
 from getwvkeys.models.User import User as UserModel
 from getwvkeys.models.WVD import WVD
+from getwvkeys.user import FlaskUser
 from getwvkeys.utils import CachedKey, DRMType
 
 # set the custom max session count
@@ -82,18 +83,6 @@ pr_sessions: dict[str, PlayreadyCdm] = dict()
 sessions: dict[str, Union[WidevineCdm, PlayreadyCdm]] = dict()
 
 
-def get_random_wvd():
-    if len(config.DEFAULT_WVDS) == 0:
-        raise Exception("No WVDs configured")
-    return secrets.choice(config.DEFAULT_WVDS)
-
-
-def get_random_prd():
-    if len(config.DEFAULT_PRDS) == 0:
-        raise Exception("No PRDs configured")
-    return secrets.choice(config.DEFAULT_PRDS)
-
-
 # def is_custom_buildinfo(buildinfo):
 #     return next(
 #         (
@@ -105,17 +94,28 @@ def get_random_prd():
 #     )
 
 
-def is_user_prd(device: str):
-    return next((False for entry in config.DEFAULT_PRDS if entry["code"] == device), False)
-
-
-def is_user_wvd(device: str):
-    return next((False for entry in config.DEFAULT_WVDS if entry["code"] == device), False)
-
-
 class Library:
+    SYSTEM_WVDS: list[WVD] = []
+    SYSTEM_PRDS: list[PRD] = []
+
     def __init__(self, db: SQLAlchemy):
         self.db = db
+
+    def get_random_wvd(self):
+        if len(self.SYSTEM_WVDS) == 0:
+            raise Exception("No WVDs configured for rotation")
+        return secrets.choice(self.SYSTEM_WVDS)
+
+    def get_random_prd(self):
+        if len(self.SYSTEM_PRDS) == 0:
+            raise Exception("No PRDs configured for rotation")
+        return secrets.choice(self.SYSTEM_PRDS)
+
+    def is_user_prd(self, device: str):
+        return next((False for entry in self.SYSTEM_PRDS if entry["code"] == device), False)
+
+    def is_user_wvd(self, device: str):
+        return next((False for entry in self.SYSTEM_WVDS if entry["code"] == device), False)
 
     def cache_keys(self, cached_keys: list[CachedKey]):
         added_count = 0
@@ -399,28 +399,34 @@ class Library:
 
     def assign_system_wvd(self, wvd_data: str) -> str:
         """Assign a WVD to the system user"""
-        from getwvkeys.user import FlaskUser
 
         system_user = FlaskUser.get_system_user(self.db)
-        return self.upload_wvd(wvd_data, system_user.id)
+        hash_val = self.upload_wvd(wvd_data, system_user.id)
+
+        # Refresh rotation config cache since system devices changed
+        self.build_rotation_config_cache()
+
+        return hash_val
 
     def assign_system_prd(self, prd_data: str) -> str:
         """Assign a PRD to the system user"""
-        from getwvkeys.user import FlaskUser
 
         system_user = FlaskUser.get_system_user(self.db)
-        return self.upload_prd(prd_data, system_user.id)
+        hash_val = self.upload_prd(prd_data, system_user.id)
+
+        # Refresh rotation config cache since system devices changed
+        self.build_rotation_config_cache()
+
+        return hash_val
 
     def get_system_devices(self):
         """Get all devices owned by the system user"""
-        from getwvkeys.user import FlaskUser
 
         system_user = FlaskUser.get_system_user(self.db)
         return {"wvds": system_user.get_user_wvds(), "prds": system_user.get_user_prds()}
 
     def migrate_devices_to_system(self, device_hashes: list, device_type: str):
         """Migrate existing devices to system user ownership"""
-        from getwvkeys.user import FlaskUser
 
         system_user = FlaskUser.get_system_user(self.db)
 
@@ -441,7 +447,60 @@ class Library:
                         system_user.user_model.prds.append(device)
 
         self.db.session.commit()
+
+        # Refresh rotation config cache since system devices changed
+        self.build_rotation_config_cache()
+
         logger.info(f"Migrated {len(device_hashes)} {device_type.upper()} devices to system user")
+
+    def get_rotation_devices(self):
+        """Get all devices enabled for rotation (only system user devices)"""
+
+        system_user = FlaskUser.get_system_user(self.db)
+
+        # Get WVDs enabled for rotation owned by system user
+        rotation_wvds = WVD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
+
+        # Get PRDs enabled for rotation owned by system user
+        rotation_prds = PRD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
+
+        return {
+            "wvds": [{"id": wvd.id, "hash": wvd.hash, "code": wvd.hash} for wvd in rotation_wvds],
+            "prds": [{"id": prd.id, "hash": prd.hash, "code": prd.hash} for prd in rotation_prds],
+        }
+
+    def set_device_rotation_status(self, device_id: int, device_type: str, enabled: bool):
+        """Enable or disable a device for rotation (only system user devices)"""
+
+        system_user = FlaskUser.get_system_user(self.db)
+
+        if device_type.lower() == "wvd":
+            device = WVD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+        elif device_type.lower() == "prd":
+            device = PRD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+        else:
+            raise BadRequest("Invalid device type")
+
+        if not device:
+            raise BadRequest("Device not found or not owned by system user")
+
+        device.enabled_for_rotation = enabled
+        self.db.session.commit()
+
+        logger.info(f"Set {device_type.upper()} device {device_id} rotation status to {enabled}")
+        return device
+
+    def build_rotation_config_cache(self):
+        """Build and cache the rotation device configuration"""
+        rotation_devices = self.get_rotation_devices()
+
+        self.SYSTEM_WVDS = rotation_devices["wvds"]
+        self.SYSTEM_PRDS = rotation_devices["prds"]
+
+        logger.info(
+            f"Updated rotation config cache: {len(rotation_devices['wvds'])} WVDs, {len(rotation_devices['prds'])} PRDs"
+        )
+        return rotation_devices
 
     def add_keys(self, keys: list, user_id: str):
         cached_keys = list()

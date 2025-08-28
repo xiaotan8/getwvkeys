@@ -15,7 +15,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from getwvkeys.models.Base import Base
@@ -25,15 +25,14 @@ from getwvkeys.models.UserWVD import user_wvd_association
 class WVD(Base):
     __tablename__ = "wvds"
     id = Column(Integer, primary_key=True, autoincrement=True)
-    hash = Column(
-        String(255, collation="utf8mb4_general_ci"), unique=True, nullable=False
-    )
+    hash = Column(String(255, collation="utf8mb4_general_ci"), unique=True, nullable=False)
     wvd = Column(Text, nullable=False)
     uploaded_by = Column(
         String(255, collation="utf8mb4_general_ci"),
         ForeignKey("users.id"),
         nullable=False,
     )
+    enabled_for_rotation = Column(Boolean, default=False, nullable=False)
     users = relationship("User", secondary=user_wvd_association, back_populates="wvds")
 
     def to_json(self):
@@ -42,4 +41,5 @@ class WVD(Base):
             "wvd": self.wvd,
             "uploaded_by": self.uploaded_by,
             "hash": self.hash,
+            "enabled_for_rotation": self.enabled_for_rotation,
         }

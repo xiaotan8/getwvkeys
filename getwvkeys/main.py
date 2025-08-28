@@ -568,9 +568,9 @@ def api():
 
             # get a random device hash
             if drm_type.is_playready():
-                device_hash = libraries.get_random_prd()
+                device_hash = library.get_random_prd()
             elif drm_type.is_widevine():
-                device_hash = libraries.get_random_wvd()
+                device_hash = library.get_random_wvd()
         else:
             # use the device hash to determine the drm system
             drm_type = library.get_device_drm_type(device_hash)
@@ -1091,68 +1091,6 @@ def user_get_cdms():
     return redirect("/me/wvds", 307)
 
 
-# @app.route("/admin/system_devices", methods=["GET", "POST"])
-# @authentication_required(flags_required=UserFlags.ADMIN)
-# def manage_system_devices():
-#     """Admin endpoint to manage system devices"""
-#     if request.method == "GET":
-#         # Return current system devices
-#         devices = library.get_system_devices()
-#         return jsonify({"status": 200, "data": devices})
-
-#     elif request.method == "POST":
-#         data = request.get_json()
-#         action = data.get("action")
-
-#         if action == "migrate":
-#             # Migrate existing devices to system user
-#             device_hashes = data.get("device_hashes", [])
-#             device_type = data.get("device_type", "").lower()
-
-#             if not device_hashes or device_type not in ["wvd", "prd"]:
-#                 return jsonify({"status": 400, "message": "Invalid device_hashes or device_type"}), 400
-
-#             try:
-#                 library.migrate_devices_to_system(device_hashes, device_type)
-#                 return jsonify(
-#                     {
-#                         "status": 200,
-#                         "message": f"Successfully migrated {len(device_hashes)} {device_type.upper()} devices to system user",
-#                     }
-#                 )
-#             except Exception as e:
-#                 logger.error(f"Error migrating devices: {e}")
-#                 return jsonify({"status": 500, "message": "Failed to migrate devices"}), 500
-
-#         elif action == "assign":
-#             # Assign new device to system user
-#             device_data = data.get("device_data")
-#             device_type = data.get("device_type", "").lower()
-
-#             if not device_data or device_type not in ["wvd", "prd"]:
-#                 return jsonify({"status": 400, "message": "Invalid device_data or device_type"}), 400
-
-#             try:
-#                 if device_type == "wvd":
-#                     hash_val = library.assign_system_wvd(device_data)
-#                 else:
-#                     hash_val = library.assign_system_prd(device_data)
-
-#                 return jsonify(
-#                     {
-#                         "status": 200,
-#                         "message": f"Successfully assigned {device_type.upper()} to system user",
-#                         "hash": hash_val,
-#                     }
-#                 )
-#             except Exception as e:
-#                 logger.error(f"Error assigning device: {e}")
-#                 return jsonify({"status": 500, "message": str(e)}), 500
-
-#         else:
-#             return jsonify({"status": 400, "message": "Invalid action. Use 'migrate' or 'assign'"}), 400
-
-
 def main():
     # Initialize key count cache on startup
     with app.app_context():
@@ -1168,6 +1106,12 @@ def main():
 
             system_user = FlaskUser.get_system_user(db)
             logger.info(f"System user initialized: {system_user.username} (ID: {system_user.id})")
+
+            # Build rotation device configuration cache from system user devices
+            rotation_devices = library.build_rotation_config_cache()
+            logger.info(
+                f"Rotation config initialized: {len(rotation_devices['wvds'])} WVDs, {len(rotation_devices['prds'])} PRDs"
+            )
 
         except Exception as e:
             logger.error(f"Failed to initialize on startup: {e}")
