@@ -32,9 +32,7 @@ class Redis:
     def __init__(self, app, library: libraries.Library) -> None:
         self.app = app
         self.library = library
-        self.redis = redis.Redis.from_url(
-            config.REDIS_URI, decode_responses=True, encoding="utf8"
-        )
+        self.redis = redis.Redis.from_url(config.REDIS_URI, decode_responses=True, encoding="utf8")
         self.p = self.redis.pubsub(ignore_subscribe_messages=True)
         self.p.subscribe(**{"api": self.redis_message_handler})
         self.redis_thread = self.p.run_in_thread(daemon=True)
@@ -66,9 +64,7 @@ class Redis:
                         FlaskUser.disable_user(db, user_id)
                         self.publish_response(reply_to)
                     except Exception as e:
-                        self.publish_error(
-                            reply_to, "Error disablng user {}: {}".format(user_id, e)
-                        )
+                        self.publish_error(reply_to, "Error disablng user {}: {}".format(user_id, e))
             elif op == OPCode.DISABLE_USER_BULK.value:
                 user_ids = d.get("user_ids")
                 if not user_ids:
@@ -81,9 +77,7 @@ class Redis:
                             reply_to,
                         )
                     except Exception as e:
-                        self.publish_error(
-                            reply_to, "Error disablng users: {}".format(e)
-                        )
+                        self.publish_error(reply_to, "Error disablng users: {}".format(e))
             elif op == OPCode.ENABLE_USER.value:
                 user_id = d.get("user_id")
                 if not user_id:
@@ -96,9 +90,7 @@ class Redis:
                             reply_to,
                         )
                     except Exception as e:
-                        self.publish_error(
-                            reply_to, "Error enabling user {}: {}".format(user_id, e)
-                        )
+                        self.publish_error(reply_to, "Error enabling user {}: {}".format(user_id, e))
             elif op == OPCode.KEY_COUNT.value:
                 with self.app.app_context():
                     self.publish_response(reply_to, self.library.get_keycount_approx())
@@ -122,9 +114,7 @@ class Redis:
                 permissions = d.get("permissions")
                 permission_action = d.get("permission_action")
                 if not user_id or not permissions:
-                    self.publish_error(
-                        reply_to, "No user_id or permissions found in message"
-                    )
+                    self.publish_error(reply_to, "No user_id or permissions found in message")
                     return
                 with self.app.app_context():
                     try:
@@ -140,9 +130,7 @@ class Redis:
                             reply_to,
                         )
                     except Exception as e:
-                        logger.exception(
-                            "Error updating permissions for {}: {}".format(user_id, e)
-                        )
+                        logger.exception("Error updating permissions for {}: {}".format(user_id, e))
                         self.publish_error(
                             reply_to,
                             "Error updating permissions for {}: {}".format(user_id, e),
@@ -166,9 +154,7 @@ class Redis:
                     except Exception as e:
                         self.publish_error(
                             reply_to,
-                            "Error resetting API Key for {}: {}".format(
-                                user.username, str(e)
-                            ),
+                            "Error resetting API Key for {}: {}".format(user.username, str(e)),
                         )
             else:
                 self.publish_error(reply_to, "Unknown OPCode {}".format(op))

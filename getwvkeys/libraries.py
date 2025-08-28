@@ -397,6 +397,52 @@ class Library:
 
         return device.hash
 
+    def assign_system_wvd(self, wvd_data: str) -> str:
+        """Assign a WVD to the system user"""
+        from getwvkeys.user import FlaskUser
+
+        system_user = FlaskUser.get_system_user(self.db)
+        return self.upload_wvd(wvd_data, system_user.id)
+
+    def assign_system_prd(self, prd_data: str) -> str:
+        """Assign a PRD to the system user"""
+        from getwvkeys.user import FlaskUser
+
+        system_user = FlaskUser.get_system_user(self.db)
+        return self.upload_prd(prd_data, system_user.id)
+
+    def get_system_devices(self):
+        """Get all devices owned by the system user"""
+        from getwvkeys.user import FlaskUser
+
+        system_user = FlaskUser.get_system_user(self.db)
+        return {"wvds": system_user.get_user_wvds(), "prds": system_user.get_user_prds()}
+
+    def migrate_devices_to_system(self, device_hashes: list, device_type: str):
+        """Migrate existing devices to system user ownership"""
+        from getwvkeys.user import FlaskUser
+
+        system_user = FlaskUser.get_system_user(self.db)
+
+        if device_type.lower() == "wvd":
+            for hash_val in device_hashes:
+                device = WVD.query.filter_by(hash=hash_val).first()
+                if device:
+                    device.uploaded_by = system_user.id
+                    if device not in system_user.user_model.wvds:
+                        system_user.user_model.wvds.append(device)
+
+        elif device_type.lower() == "prd":
+            for hash_val in device_hashes:
+                device = PRD.query.filter_by(hash=hash_val).first()
+                if device:
+                    device.uploaded_by = system_user.id
+                    if device not in system_user.user_model.prds:
+                        system_user.user_model.prds.append(device)
+
+        self.db.session.commit()
+        logger.info(f"Migrated {len(device_hashes)} {device_type.upper()} devices to system user")
+
     def add_keys(self, keys: list, user_id: str):
         cached_keys = list()
 

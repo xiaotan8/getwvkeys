@@ -107,9 +107,7 @@ class FlaskUser(UserMixin):
 
         # Check if the device is associated with the user
         if wvd and self.user_model.wvds:
-            association_query = text(
-                "DELETE FROM user_wvd WHERE user_id = :user_id AND device_hash = :device_hash"
-            )
+            association_query = text("DELETE FROM user_wvd WHERE user_id = :user_id AND device_hash = :device_hash")
             session.execute(
                 association_query,
                 {"user_id": self.user_model.id, "device_hash": wvd.hash},
@@ -117,12 +115,8 @@ class FlaskUser(UserMixin):
             session.commit()
 
             # Check if the device is still associated with any other users
-            count_query = text(
-                "SELECT COUNT(*) FROM user_wvd WHERE device_hash = :device_hash"
-            )
-            device_users_count = session.execute(
-                count_query, {"device_hash": wvd.hash}
-            ).scalar()
+            count_query = text("SELECT COUNT(*) FROM user_wvd WHERE device_hash = :device_hash")
+            device_users_count = session.execute(count_query, {"device_hash": wvd.hash}).scalar()
 
             if device_users_count == 0:
                 # If no other users are associated, delete the wvd
@@ -143,9 +137,7 @@ class FlaskUser(UserMixin):
 
         # Check if the device is associated with the user
         if prd and self.user_model.prds:
-            association_query = text(
-                "DELETE FROM user_prd WHERE user_id = :user_id AND device_hash = :device_hash"
-            )
+            association_query = text("DELETE FROM user_prd WHERE user_id = :user_id AND device_hash = :device_hash")
             session.execute(
                 association_query,
                 {"user_id": self.user_model.id, "device_hash": prd.hash},
@@ -153,12 +145,8 @@ class FlaskUser(UserMixin):
             session.commit()
 
             # Check if the device is still associated with any other users
-            count_query = text(
-                "SELECT COUNT(*) FROM user_prd WHERE device_hash = :device_hash"
-            )
-            device_users_count = session.execute(
-                count_query, {"device_hash": prd.hash}
-            ).scalar()
+            count_query = text("SELECT COUNT(*) FROM user_prd WHERE device_hash = :device_hash")
+            device_users_count = session.execute(count_query, {"device_hash": prd.hash}).scalar()
 
             if device_users_count == 0:
                 # If no other users are associated, delete the prd
@@ -233,9 +221,7 @@ class FlaskUser(UserMixin):
     def is_api_key_bot(api_key):
         """checks if the api key is from the bot"""
         bot_key = base64.b64encode(
-            "{}:{}".format(
-                config.OAUTH2_CLIENT_ID, config.OAUTH2_CLIENT_SECRET
-            ).encode()
+            "{}:{}".format(config.OAUTH2_CLIENT_ID, config.OAUTH2_CLIENT_SECRET).encode()
         ).decode("utf8")
         return api_key == bot_key
 
@@ -250,7 +236,13 @@ class FlaskUser(UserMixin):
     def is_blacklist_exempt(self):
         return self.flags.has(UserFlags.BLACKLIST_EXEMPT)
 
+    def is_system_user(self):
+        return self.flags.has(UserFlags.SYSTEM)
+
     def check_status(self, ignore_suspended=False):
+        if self.is_system_user():
+            raise Forbidden("System users cannot login or access the API.")
+
         if self.flags.has(UserFlags.SUSPENDED) == 1 and not ignore_suspended:
             raise Forbidden("Your account has been suspended.")
 
@@ -281,11 +273,7 @@ class FlaskUser(UserMixin):
 
     @staticmethod
     def disable_users(db: SQLAlchemy, user_ids: list):
-        print(
-            "Request to disable {} users: {}".format(
-                len(user_ids), ", ".join([str(x) for x in user_ids])
-            )
-        )
+        print("Request to disable {} users: {}".format(len(user_ids), ", ".join([str(x) for x in user_ids])))
         if len(user_ids) == 0:
             raise BadRequest("No data to update or update is not allowed")
 
@@ -308,3 +296,38 @@ class FlaskUser(UserMixin):
     @staticmethod
     def get_user_count():
         return User.query.count()
+
+    @staticmethod
+    def create_system_user(db: SQLAlchemy):
+        """Create or get the system user for owning system devices"""
+        system_user_id = "SYSTEM"
+
+        # Check if system user already exists
+        existing_user = User.query.filter_by(id=system_user_id).first()
+        if existing_user:
+            return FlaskUser(db, existing_user)
+
+        # Create system user
+        system_user = User(
+            id=system_user_id,
+            username="System",
+            discriminator="0000",
+            avatar=None,
+            public_flags=0,
+            api_key=secrets.token_hex(32),  # Generate API key but it won't be usable
+            flags=UserFlags.SYSTEM.value,  # Set system flag
+        )
+
+        db.session.add(system_user)
+        db.session.commit()
+
+        logger.info("Created system user")
+        return FlaskUser(db, system_user)
+
+    @staticmethod
+    def get_system_user(db: SQLAlchemy):
+        """Get the system user, create if it doesn't exist"""
+        system_user = User.query.filter_by(id="SYSTEM").first()
+        if not system_user:
+            return FlaskUser.create_system_user(db)
+        return FlaskUser(db, system_user)
