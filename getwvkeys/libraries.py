@@ -421,11 +421,13 @@ class Library:
 
         return hash_val
 
-    def get_system_devices(self):
+    def get_system_devices(self) -> tuple[list[WVD], list[PRD]]:
         """Get all devices owned by the system user"""
 
         system_user = FlaskUser.get_system_user(self.db)
-        return {"wvds": system_user.get_user_wvds(), "prds": system_user.get_user_prds()}
+        wvds = system_user.user_model.wvds
+        prds = system_user.user_model.prds
+        return (wvds, prds)
 
     def migrate_devices_to_system(self, device_hashes: list, device_type: str):
         """Migrate existing devices to system user ownership"""
@@ -455,7 +457,7 @@ class Library:
 
         logger.info(f"Migrated {len(device_hashes)} {device_type.upper()} devices to system user")
 
-    def get_rotation_devices(self) -> tuple[list[str], list[str]]:
+    def get_rotation_devices(self) -> tuple[list[WVD], list[PRD]]:
         """Get all devices enabled for rotation (only system user devices)"""
 
         system_user = FlaskUser.get_system_user(self.db)
@@ -467,9 +469,7 @@ class Library:
         prds: list[PRD] = PRD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
 
         # only hash
-        wvd_hashes = [x.hash for x in wvds]
-        prd_hashes = [x.hash for x in prds]
-        return (wvd_hashes, prd_hashes)
+        return (wvds, prds)
 
     def set_device_rotation_status(self, device_id: int, device_type: str, enabled: bool):
         """Enable or disable a device for rotation (only system user devices)"""
@@ -496,8 +496,8 @@ class Library:
         """Build and cache the rotation device configuration"""
         wvds, prds = self.get_rotation_devices()
 
-        self.SYSTEM_WVDS = wvds
-        self.SYSTEM_PRDS = prds
+        self.SYSTEM_WVDS = [x.hash for x in wvds]
+        self.SYSTEM_PRDS = [x.hash for x in prds]
 
         logger.info(f"Updated rotation config cache: {len(wvds)} WVDs, {len(prds)} PRDs")
         return (wvds, prds)

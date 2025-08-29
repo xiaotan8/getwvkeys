@@ -116,19 +116,19 @@ def show_system_devices():
     app = create_app()
     with app.app_context():
         library = Library(db)
-        devices = library.get_system_devices()
-        wvds, prds = library.get_rotation_devices()
+        system_wvds, system_prds = library.get_system_devices()
+        enabled_wvds, enabled_prds = library.get_rotation_devices()
 
         print(f"\nSystem User Devices:")
-        print(f"  WVDs: {len(devices['wvds'])}")
-        for wvd in devices["wvds"]:
-            rotation_status = "ENABLED" if any(r == wvd["hash"] for r in wvds) else "DISABLED"
-            print(f"    - ID: {wvd['id']} | Hash: {wvd['hash']} | Rotation: {rotation_status}")
+        print(f"  WVDs: {len(system_wvds)}")
+        for wvd in system_wvds:
+            rotation_status = "ENABLED" if any(r.hash == wvd.hash for r in enabled_wvds) else "DISABLED"
+            print(f"    - ID: {wvd.id} | Hash: {wvd.hash} | Rotation: {rotation_status}")
 
-        print(f"  PRDs: {len(devices['prds'])}")
-        for prd in devices["prds"]:
-            rotation_status = "ENABLED" if any(r == prd["hash"] for r in prds) else "DISABLED"
-            print(f"    - ID: {prd['id']} | Hash: {prd['hash']} | Rotation: {rotation_status}")
+        print(f"  PRDs: {len(system_prds)}")
+        for prd in system_prds:
+            rotation_status = "ENABLED" if any(r.hash == prd.hash for r in enabled_prds) else "DISABLED"
+            print(f"    - ID: {prd.id} | Hash: {prd.hash} | Rotation: {rotation_status}")
 
 
 def set_device_rotation(device_id, device_type, enabled):
@@ -159,11 +159,11 @@ def show_rotation_devices():
         print(f"\nDevices Enabled for Rotation:")
         print(f"  WVDs: {len(wvds)}")
         for wvd in wvds:
-            print(f"    - ID: {wvd['id']} | Hash: {wvd['hash']}")
+            print(f"    - ID: {wvd.id} | Hash: {wvd.hash}")
 
         print(f"  PRDs: {len(prds)}")
         for prd in prds:
-            print(f"    - ID: {prd['id']} | Hash: {prd['hash']}")
+            print(f"    - ID: {prd.id} | Hash: {prd.hash}")
 
 
 def main():
