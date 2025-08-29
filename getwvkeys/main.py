@@ -239,6 +239,23 @@ def remotecdm_authentication_required(exempt_methods=[]):
     return decorator
 
 
+# optional auth, if api key specified, get the user
+def optional_auth():
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(*args, **kwargs):
+            api_key = request.headers.get("X-API-Key")
+            if api_key:
+                user = FlaskUser.get_user_by_api_key(db, api_key)
+                if user:
+                    login_user(user, remember=False)
+            return func(*args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
 # only allow specified cdm ids to use an operation
 def remotecdm_require_cdmids(cdm_ids=[]):
     def decorator(func):
@@ -618,11 +635,13 @@ def api():
 
 
 @app.route("/api/remotecdm")
+@optional_auth()
 def remote_cdm_ping():
     return jsonify({"status": 200, "message": "pong"})
 
 
 @app.route("/api/remotecdm/<cdm_id>", methods=["GET"])
+@optional_auth()
 @remotecdm_validate_cdmid()
 def remote_cdm_config(cdm_id: str):
     if cdm_id == "widevine":
@@ -649,6 +668,7 @@ def remote_cdm_config(cdm_id: str):
 
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/open", methods=["GET"])
 # @remotecdm_authentication_required()
+@optional_auth()
 @remotecdm_validate_cdmid()
 def remote_cdm_open(cdm_id: str, device_name: str):
     return library.remote_cdm_open(cdm_id, device_name)
@@ -656,6 +676,7 @@ def remote_cdm_open(cdm_id: str, device_name: str):
 
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/close/<session_id>", methods=["GET"])
 # @remotecdm_authentication_required()
+@optional_auth()
 @remotecdm_validate_cdmid()
 def remote_cdm_close(cdm_id: str, device_name: str, session_id: str):
     session_id = bytes.fromhex(session_id)
@@ -664,6 +685,7 @@ def remote_cdm_close(cdm_id: str, device_name: str, session_id: str):
 
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/set_service_certificate", methods=["POST"])
 # @remotecdm_authentication_required()
+@optional_auth()
 @remotecdm_validate_cdmid()
 @remotecdm_require_cdmids(cdm_ids=["widevine"])
 @ensure_body_keys(required_keys=["session_id", "certificate"])
@@ -679,6 +701,7 @@ def remote_cdm_set_service_certificate(cdm_id: str, device_name: str):
 
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/get_service_certificate", methods=["POST"])
 # @remotecdm_authentication_required()
+@optional_auth()
 @remotecdm_validate_cdmid()
 @remotecdm_require_cdmids(cdm_ids=["widevine"])
 @ensure_body_keys(required_keys=["session_id"])
@@ -693,6 +716,7 @@ def remote_cdm_get_service_certificate(cdm_id: str, device_name: str):
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/get_license_challenge", methods=["POST"])
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/get_license_challenge/<license_type>", methods=["POST"])
 # @remotecdm_authentication_required()
+@optional_auth()
 @remotecdm_validate_cdmid()
 @ensure_body_keys(required_keys=["session_id", "init_data"])
 def remote_cdm_license_challenge(cdm_id: str, device_name: str, license_type: str = "STREAMING"):
@@ -704,6 +728,7 @@ def remote_cdm_license_challenge(cdm_id: str, device_name: str, license_type: st
 
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/parse_license", methods=["POST"])
 # @remotecdm_authentication_required()
+@optional_auth()
 @remotecdm_validate_cdmid()
 @ensure_body_keys(required_keys=["session_id", "license_message"])
 def remote_cdm_parse_license(cdm_id: str, device_name: str):
@@ -716,6 +741,7 @@ def remote_cdm_parse_license(cdm_id: str, device_name: str):
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/get_keys", methods=["POST"])
 @app.route("/api/remotecdm/<cdm_id>/<device_name>/get_keys/<key_type>", methods=["POST"])
 # @remotecdm_authentication_required()
+@optional_auth()
 @remotecdm_validate_cdmid()
 @ensure_body_keys(required_keys=["session_id"])
 def remote_cdm_get_keys(cdm_id: str, device_name: str, key_type: str = "STREAMING"):
@@ -995,7 +1021,7 @@ def gone_exception(e: Gone):
         jsonify(
             {
                 "error": True,
-                "code": 500,
+                "code": 410,
                 "message": "The page you are looking for is no longer available.",
             }
         ),
@@ -1108,10 +1134,8 @@ def main():
             logger.info(f"System user initialized: {system_user.username} (ID: {system_user.id})")
 
             # Build rotation device configuration cache from system user devices
-            rotation_devices = library.build_rotation_config_cache()
-            logger.info(
-                f"Rotation config initialized: {len(rotation_devices['wvds'])} WVDs, {len(rotation_devices['prds'])} PRDs"
-            )
+            wvds, prds = library.build_rotation_config_cache()
+            logger.info(f"Rotation config initialized: {len(wvds)} WVDs, {len(prds)} PRDs")
 
         except Exception as e:
             logger.error(f"Failed to initialize on startup: {e}")

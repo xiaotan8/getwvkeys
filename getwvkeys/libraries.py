@@ -107,6 +107,7 @@ class Library:
         return secrets.choice(self.SYSTEM_WVDS)
 
     def get_random_prd(self):
+        print(self.SYSTEM_PRDS)
         if len(self.SYSTEM_PRDS) == 0:
             raise Exception("No PRDs configured for rotation")
         return secrets.choice(self.SYSTEM_PRDS)
@@ -238,7 +239,10 @@ class Library:
         """
         Converts a list of Keys from search method to a list of dicts
         """
-        results = {"kid": kid, "keys": list()}
+        results = {
+            "kid": kid,
+            "keys": list(),
+        }
         for key in keys:
             license_url = key.license_url
             if license_url:
@@ -249,7 +253,7 @@ class Library:
                     "added_at": key.added_at,
                     # We shouldnt return the license url as that could have sensitive information it in still
                     "license_url": license_url,
-                    "key": key.key_,
+                    "key": f"{key.kid}:{key.key_}",
                 }
             )
         return results
@@ -286,7 +290,6 @@ class Library:
     #     return code
 
     def get_device_by_hash(self, device_hash: str):
-        print(device_hash)
         # try to get prd or wvd by hash
         device = PRD.query.filter_by(hash=device_hash).first()
         if device:
@@ -453,21 +456,21 @@ class Library:
 
         logger.info(f"Migrated {len(device_hashes)} {device_type.upper()} devices to system user")
 
-    def get_rotation_devices(self):
+    def get_rotation_devices(self) -> tuple[list[str], list[str]]:
         """Get all devices enabled for rotation (only system user devices)"""
 
         system_user = FlaskUser.get_system_user(self.db)
 
         # Get WVDs enabled for rotation owned by system user
-        rotation_wvds = WVD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
+        wvds: list[WVD] = WVD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
 
         # Get PRDs enabled for rotation owned by system user
-        rotation_prds = PRD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
+        prds: list[PRD] = PRD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
 
-        return {
-            "wvds": [{"id": wvd.id, "hash": wvd.hash, "code": wvd.hash} for wvd in rotation_wvds],
-            "prds": [{"id": prd.id, "hash": prd.hash, "code": prd.hash} for prd in rotation_prds],
-        }
+        # only hash
+        wvd_hashes = [x.hash for x in wvds]
+        prd_hashes = [x.hash for x in prds]
+        return (wvd_hashes, prd_hashes)
 
     def set_device_rotation_status(self, device_id: int, device_type: str, enabled: bool):
         """Enable or disable a device for rotation (only system user devices)"""
@@ -490,17 +493,15 @@ class Library:
         logger.info(f"Set {device_type.upper()} device {device_id} rotation status to {enabled}")
         return device
 
-    def build_rotation_config_cache(self):
+    def build_rotation_config_cache(self) -> list[str]:
         """Build and cache the rotation device configuration"""
-        rotation_devices = self.get_rotation_devices()
+        wvds, prds = self.get_rotation_devices()
 
-        self.SYSTEM_WVDS = rotation_devices["wvds"]
-        self.SYSTEM_PRDS = rotation_devices["prds"]
+        self.SYSTEM_WVDS = wvds
+        self.SYSTEM_PRDS = prds
 
-        logger.info(
-            f"Updated rotation config cache: {len(rotation_devices['wvds'])} WVDs, {len(rotation_devices['prds'])} PRDs"
-        )
-        return rotation_devices
+        logger.info(f"Updated rotation config cache: {len(wvds)} WVDs, {len(prds)} PRDs")
+        return (wvds, prds)
 
     def add_keys(self, keys: list, user_id: str):
         cached_keys = list()
@@ -643,17 +644,17 @@ class Library:
                 ),
                 429,
             )
-        except Exception as e:
-            logger.exception(e)
-            return (
-                jsonify(
-                    {
-                        "status": 500,
-                        "message": str(e),
-                    }
-                ),
-                500,
-            )
+        # except Exception as e:
+        #     logger.exception(e)
+        #     return (
+        #         jsonify(
+        #             {
+        #                 "status": 500,
+        #                 "message": str(e),
+        #             }
+        #         ),
+        #         500,
+        #     )
 
         return jsonify(
             {

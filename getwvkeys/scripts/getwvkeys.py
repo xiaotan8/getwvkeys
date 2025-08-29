@@ -25,12 +25,16 @@ import requests
 """
 Script Version: 5.3
 - Renamed buildinfo to device_hash
+
+Script Version: 5.4
+ - Added device_hash and security level support
+ - Changed output format of keys
 """
 
 # Version of the API the script is for. This should be changed when the API is updated.
 API_VERSION = "5.1"
 # Version of the individual script
-SCRIPT_VERSION = "5.3"
+SCRIPT_VERSION = "5.4"
 # Dynamic injection of the API url
 API_URL = "__getwvkeys_api_url__"
 
@@ -71,9 +75,7 @@ class GetWVKeys:
         self.force = force
         self.device_hash = device_hash
 
-        self.baseurl = (
-            "https://getwvkeys.cc" if API_URL == "__getwvkeys_api_url__" else API_URL
-        )
+        self.baseurl = "https://getwvkeys.cc" if API_URL == "__getwvkeys_api_url__" else API_URL
         self.api_url = "{}/api".format(self.baseurl)
         self.headers = _headers
 
@@ -92,17 +94,9 @@ class GetWVKeys:
             if "error" in r.text:
                 # parse the response as a json error
                 error = json.loads(r.text)
-                print(
-                    "[-] Failed to generate license request: [{}] {}".format(
-                        error.get("code"), error.get("message")
-                    )
-                )
+                print("[-] Failed to generate license request: [{}] {}".format(error.get("code"), error.get("message")))
                 exit(1)
-            print(
-                "[-] Failed to generate license request: [{}] {}".format(
-                    r.status_code, r.text
-                )
-            )
+            print("[-] Failed to generate license request: [{}] {}".format(r.status_code, r.text))
             exit(1)
 
         data = r.json()
@@ -113,10 +107,14 @@ class GetWVKeys:
 
         self.session_id = data["session_id"]
         challenge = data["challenge"]
+        device_hash = data["device"]
+        security_level = data["security_level"]
 
         if self.verbose:
             print("[+] License Request Generated\n", challenge)
             print("[+] Session ID:", self.session_id)
+            print("[+] Device Hash:", device_hash)
+            print("[+] Security Level:", security_level)
 
         return {"cache": False, "challenge": base64.b64decode(challenge)}
 
@@ -138,15 +136,9 @@ class GetWVKeys:
             if "error" in r.text:
                 # parse the response as a json error
                 error = json.loads(r.text)
-                print(
-                    "[-] Failed to decrypt license: [{}] {}".format(
-                        error.get("code"), error.get("message")
-                    )
-                )
+                print("[-] Failed to decrypt license: [{}] {}".format(error.get("code"), error.get("message")))
                 exit(1)
-            print(
-                "[-] Failed to decrypt license: [{}] {}".format(r.status_code, r.text)
-            )
+            print("[-] Failed to decrypt license: [{}] {}".format(r.status_code, r.text))
             exit(1)
         return r.json()
 
@@ -154,8 +146,8 @@ class GetWVKeys:
         license_request = self.generate_request()
         if license_request["cache"] == True:
             if __name__ == "__main__":
-                print("\n" * 5)
-                print("[+] Keys:")
+                # print("\n" * 5)
+                print("[+] Keys (Cache):")
                 keys = license_request["keys"]
                 for k in keys:
                     print("--key {}".format(k["key"]))
@@ -164,22 +156,23 @@ class GetWVKeys:
                 return license_request["keys"]
         if self.verbose:
             print("[+] Sending License URL Request")
-        license_response = post_request(
-            self.url, self.headers, license_request["challenge"], self.verbose
-        )
+        license_response = post_request(self.url, self.headers, license_request["challenge"], self.verbose)
         decrypt_response = self.decrypter(base64.b64encode(license_response).decode())
         keys = decrypt_response["keys"]
         session_id = decrypt_response["session_id"]
+        device_hash = decrypt_response["device"]
+        security_level = decrypt_response["security_level"]
 
         if self.verbose:
-            print(json.dumps(decrypt_response, indent=4))
             print("Decryption Session ID:", session_id)
+            print("Device Hash:", device_hash)
+            print("Security Level:", security_level)
 
         if __name__ == "__main__":
-            print("\n" * 5)
+            # print("\n" * 5)
             print("[+] Keys:")
             for k in keys:
-                print("--key {}".format(k))
+                print("--key {}".format(k["key"]))
             return
         else:
             return decrypt_response
@@ -207,9 +200,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--auth", "-api_key", help="GetWVKeys API Key"
     )  # auth is deprecated, use api_key instead. auth will be removed in the next major version
-    parser.add_argument(
-        "--verbose", "-v", help="increase output verbosity", action="store_true"
-    )
+    parser.add_argument("--verbose", "-v", help="increase output verbosity", action="store_true")
     parser.add_argument(
         "--force",
         "-f",
@@ -217,17 +208,11 @@ if __name__ == "__main__":
         default=False,
         action="store_true",
     )
-    parser.add_argument(
-        "--device", "-d", dest="device_hash", default="", help="Device Hash", required=False
-    )
-    parser.add_argument(
-        "--version", "-V", help="Print version and exit", action="store_true"
-    )
+    parser.add_argument("--device", "-d", dest="device_hash", default="", help="Device Hash", required=False)
+    parser.add_argument("--version", "-V", help="Print version and exit", action="store_true")
 
     args = parser.parse_args()
-    args.auth = (
-        getwvkeys_api_key if getwvkeys_api_key != "__getwvkeys_api_key__" else args.auth
-    )
+    args.auth = getwvkeys_api_key if getwvkeys_api_key != "__getwvkeys_api_key__" else args.auth
     args.headers = headers
 
     if args.version:

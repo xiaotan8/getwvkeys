@@ -2,9 +2,11 @@ import base64
 import json
 import logging
 import time
+from urllib.parse import urlsplit
 
 import requests
 from flask import jsonify, render_template
+from google.protobuf.message import DecodeError
 from pywidevine import PSSH as WidevinePSSH
 from pywidevine import Cdm as WidevineCdm
 from pywidevine import Device as WidevineDevice
@@ -64,11 +66,14 @@ class Widevine(BaseService):
         self.is_web = is_web
         self.curl = is_curl
 
-        if pssh:
-            if self.pssh.key_ids and len(self.pssh.key_ids) > 0:
-                self.kid = self.pssh.key_ids[0].hex
-            else:
-                self.force = True
+        try:
+            if pssh:
+                if self.pssh.key_ids and len(self.pssh.key_ids) > 0:
+                    self.kid = self.pssh.key_ids[0].hex
+                else:
+                    self.force = True
+        except DecodeError:
+            raise BadRequest("Invalid PSSH")
 
     @staticmethod
     def post_data(license_url, headers, data, proxy):
@@ -188,9 +193,9 @@ class Widevine(BaseService):
                 except WidevineSignatureMismatch as e:
                     logger.exception(e)
                     raise BadRequest("[Widevine] Server Certificate Signature Mismatch")
-                except Exception as e:
-                    logger.exception(e)
-                    raise BadRequest(f"[Widevine] Exception: {e}")
+                # except Exception as e:
+                #     logger.exception(e)
+                #     raise BadRequest("[Widevine] An error occurred")
 
             try:
                 license_request = cdm.get_license_challenge(
@@ -201,9 +206,9 @@ class Widevine(BaseService):
             except WidevineInvalidInitData as e:
                 logger.exception(e)
                 raise BadRequest("[Widevine] Invalid init data")
-            except Exception as e:
-                logger.exception(e)
-                raise BadRequest("[Widevine] Exception: " + str(e))
+            # except Exception as e:
+            #     logger.exception(e)
+            #     raise BadRequest("[Widevine] An error occurred")
 
             if self.curl or self.is_web:
                 try:
@@ -218,15 +223,15 @@ class Widevine(BaseService):
                 except WidevineInvalidLicenseMessage as e:
                     logger.exception(e)
                     raise BadRequest("[Widevine] Invalid License Message")
-                except Exception as e:
-                    logger.exception(e)
-                    raise BadRequest("[Widevine] Exception: " + str(e))
+                # except Exception as e:
+                #     logger.exception(e)
+                #     raise BadRequest("[Widevine] An error occurred")
 
                 try:
                     keys = cdm.get_keys(session_id=bytes.fromhex(self.session_id), type_="CONTENT")
                 except ValueError as e:
                     logger.exception(e)
-                    raise BadRequest("[PlayReady] Failed to get keys")
+                    raise BadRequest("[Widevine] Failed to get keys")
 
                 for key in keys:
                     self.content_keys.append(
@@ -241,6 +246,8 @@ class Widevine(BaseService):
 
                 # caching
                 data = self._cache_keys()
+                data["device"] = self.device
+                data["security_level"] = f"L{cdm.security_level}"
 
                 # close the session
                 cdm.close(session_id=bytes.fromhex(self.session_id))
@@ -250,7 +257,14 @@ class Widevine(BaseService):
 
                 return render_template("success.html", page_title="Success", results=data)
             else:
-                return jsonify({"challenge": base64.b64encode(license_request).decode(), "session_id": self.session_id})
+                return jsonify(
+                    {
+                        "challenge": base64.b64encode(license_request).decode(),
+                        "session_id": self.session_id,
+                        "device": self.device,
+                        "security_level": f"L{cdm.security_level}",
+                    }
+                )
         else:
             # get session
             cdm = wv_sessions.get(self.session_id)
@@ -268,9 +282,9 @@ class Widevine(BaseService):
             except WidevineInvalidSession as e:
                 logger.exception(e)
                 raise BadRequest("[Widevine] Invalid Session")
-            except Exception as e:
-                logger.exception(e)
-                raise BadRequest("[Widevine] Exception: " + str(e))
+            # except Exception as e:
+            #     logger.exception(e)
+            #     raise BadRequest("[Widevine] Exception: " + str(e))
 
             try:
                 keys = cdm.get_keys(session_id=bytes.fromhex(self.session_id), type_="CONTENT")
@@ -279,7 +293,7 @@ class Widevine(BaseService):
                 raise BadRequest("[Widevine] Invalid Session")
             except ValueError as e:
                 logger.exception(e)
-                raise BadRequest("[PlayReady] Failed to get keys")
+                raise BadRequest("[Widevine] Failed to get keys")
 
             for key in keys:
                 self.content_keys.append(
@@ -294,6 +308,8 @@ class Widevine(BaseService):
 
             # caching
             output = self._cache_keys()
+            output["device"] = self.device
+            output["security_level"] = f"L{cdm.security_level}"
 
             # close the session
             cdm.close(session_id=bytes.fromhex(self.session_id))
@@ -304,17 +320,22 @@ class Widevine(BaseService):
         self.library.cache_keys(self.content_keys)
 
         results = {
-            "license_url": self.license_url,
-            "added_at": self.time,
-            "keys": list(),
             "kid": self.kid,
+            "keys": list(),
+            "device": self.device,
             "session_id": self.session_id,
         }
         for key in self.content_keys:
-            # s = urlsplit(self.license_url)
-            # license_url = "{}//{}".format(s.scheme, s.netloc)
-            results["keys"].append(f"{key.kid}:{key.key}")
-
-        return results
+            if key.license_url:
+                s = urlsplit(key.license_url)
+                license_url = "{}://{}".format(s.scheme, s.netloc)
+            results["keys"].append(
+                {
+                    "added_at": key.added_at,
+                    # We shouldnt return the license url as that could have sensitive information it in still
+                    "license_url": license_url,
+                    "key": f"{key.kid}:{key.key}",
+                }
+            )
 
         return results

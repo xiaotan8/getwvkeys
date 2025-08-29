@@ -24,7 +24,7 @@
     <div id="sections">
         <section>
             <h2>Authentication</h2>
-            <p>All requests must include an API key header:</p>
+            <p>All requests must include an API key header</p>
             <pre><code>X-API-Key: {{ current_user.api_key if current_user.api_key else "YOUR API KEY HERE" }}</code></pre>
         </section>
 
@@ -43,52 +43,71 @@
   "downgrade": true | false,                // OPTIONAL. PlayReady only
   "is_curl": true | false,                  // OPTIONAL. If true, server performs the license request directly
   "response": "string",                     // OPTIONAL*. License server response (for second step)
-  "session_id": "string",                    // OPTIONAL*. Session ID from challenge generation
+  "session_id": "string",                   // OPTIONAL*. Session ID from challenge generation
   "is_curl": true | false,                  // OPTIONAL. If true, server performs the license request directly and return JSON
 }</code></pre>
             </section>
 
             <section>
                 <h3>Behavior</h3>
-                <span>The request behaves differently depending on the parameters:</span>
+                <span>The request behaves differently depending on the parameters</span>
                 <ul>
                     <li>
-                        <strong>When <code>is_curl</code> is false or omitted</strong>: Server generates a challenge for
-                        you to send to the license server (ex: cases where the license server uses a non-standard
-                        request body).
+                        <strong>When <code>is_curl</code> is false or omitted</strong>: Server generates a challenge for you to send to the license server (ex: cases where the
+                        license server uses a non-standard request body).
                     </li>
                     <li>
-                        <strong>When <code>is_curl</code> is true</strong>: Server performs the license request itself
-                        and returns keys.
+                        <strong>When <code>is_curl</code> is true</strong>: Server performs the license request itself and returns keys.
                     </li>
                     <li>
-                        <strong>To decrypt license responses</strong>: Send the base64 license in
-                        <code>response</code> along with <code>session_id</code>, and all other original parameters.
+                        <strong>To decrypt license responses</strong>: Send the base64 license in <code>response</code> along with <code>session_id</code>, and all other original
+                        parameters.
                     </li>
                 </ul>
             </section>
 
             <section>
                 <h4>Response (when is_curl is false)</h4>
-                <p>Server returns a generated challenge:</p>
+                <p>Server returns a generated challenge</p>
                 <pre><code>{
   "challenge": "string",
-  "session_id": "string"
+  "session_id": "string",
+  "device": "string", // Device Hash
+  "security_level": "string" // Security Level of the device, prefixed with SL (PlayReady) or L (Widevine)
 }</code></pre>
             </section>
 
             <section>
-                <h4>Response (key result)</h4>
-                <p>Returned when is_curl is true, or when posting back the license server response:</p>
+                <h4>Response (Key Result)</h4>
+                <p>Returned when is_curl is true, or when posting back the license server response</p>
                 <pre><code>{
   "keys": [
     {
-      "added_at": 1733171162,
-      "key": "517453862d4256fd8bad4f58422004d7:5b4b848eac0855d79165d05f3cf16d56",
-      "license_url": "https://cwip-shaka-proxy.appspot.com"
+      "added_at": number, // unix timestamp
+      "key": "string",
+      "license_url": "string"
     }
   ],
-  "kid": "517453862d4256fd8bad4f58422004d7"
+  "kid": "string",
+  "device": "string", // Device Hash
+  "security_level": "string" // Security Level of the device, prefixed with SL (PlayReady) or L (Widevine)
+  "session_id": "string"
+}</code></pre>
+                <p><strong>Note:</strong> The <code>key</code> field is always in the format <code>kid:key</code>.</p>
+            </section>
+
+            <section>
+                <h4>Response (Cached Key Result)</h4>
+                <p>Identified by X-Cache header, should always be set as "HIT" if present</p>
+                <pre><code>{
+  "keys": [
+    {
+      "added_at": number, // unix timestamp
+      "key": "string",
+      "license_url": "string"
+    }
+  ],
+  "kid": "string"
 }</code></pre>
                 <p><strong>Note:</strong> The <code>key</code> field is always in the format <code>kid:key</code>.</p>
             </section>

@@ -4,6 +4,7 @@ import logging
 import time
 import uuid
 import xml.etree.ElementTree as ET
+from urllib.parse import urlsplit
 
 import requests
 from flask import jsonify, render_template
@@ -220,9 +221,9 @@ class PlayReady(BaseService):
             except PlayreadyInvalidInitData as e:
                 logger.exception(e)
                 raise BadRequest("[PlayReady] Invalid init data")
-            except Exception as e:
-                logger.exception(e)
-                raise BadRequest("[PlayReady] Exception: " + str(e))
+            # except Exception as e:
+            #     logger.exception(e)
+            #     raise BadRequest("[PlayReady] An error occurred")
 
             if self.curl or self.is_web:
                 try:
@@ -237,9 +238,9 @@ class PlayReady(BaseService):
                 except PlayreadyInvalidLicense as e:
                     logger.exception(e)
                     raise BadRequest("[PlayReady] Invalid License")
-                except Exception as e:
-                    logger.exception(e)
-                    raise BadRequest("[PlayReady] Exception: " + str(e))
+                # except Exception as e:
+                #     logger.exception(e)
+                #     raise BadRequest("[PlayReady] An error occurred")
 
                 try:
                     keys = cdm.get_keys(session_id=bytes.fromhex(self.session_id))
@@ -260,6 +261,8 @@ class PlayReady(BaseService):
 
                 # caching
                 data = self._cache_keys()
+                data["device"] = self.device
+                data["security_level"] = f"SL{cdm.security_level}"
 
                 # close the session
                 cdm.close(session_id=bytes.fromhex(self.session_id))
@@ -269,7 +272,14 @@ class PlayReady(BaseService):
 
                 return render_template("success.html", page_title="Success", results=data)
             else:
-                return jsonify({"challenge": license_request, "session_id": self.session_id})
+                return jsonify(
+                    {
+                        "challenge": license_request,
+                        "session_id": self.session_id,
+                        "device": self.device,
+                        "security_level": f"SL{cdm.security_level}",
+                    }
+                )
         else:
             # get session
             cdm = pr_sessions.get(self.session_id)
@@ -287,9 +297,9 @@ class PlayReady(BaseService):
             except PlayreadyInvalidSession as e:
                 logger.exception(e)
                 raise BadRequest("[PlayReady] Invalid session")
-            except Exception as e:
-                logger.exception(e)
-                raise BadRequest("[PlayReady] Exception: " + str(e))
+            # except Exception as e:
+            #     logger.exception(e)
+            #     raise BadRequest("[PlayReady] An error occurred")
 
             try:
                 keys = cdm.get_keys(session_id=bytes.fromhex(self.session_id))
@@ -313,6 +323,8 @@ class PlayReady(BaseService):
 
             # caching
             output = self._cache_keys()
+            output["device"] = self.device
+            output["security_level"] = f"SL{cdm.security_level}"
 
             # close the session
             cdm.close(session_id=bytes.fromhex(self.session_id))
@@ -323,16 +335,22 @@ class PlayReady(BaseService):
         self.library.cache_keys(self.content_keys)
 
         results = {
-            "license_url": self.license_url,
-            "added_at": self.time,
             "kid": self.kid,
             "keys": list(),
+            "device": self.device,
             "session_id": self.session_id,
         }
         for key in self.content_keys:
-            # s = urlsplit(self.license_url)
-            # license_url = "{}//{}".format(s.scheme, s.netloc)
-            results["keys"].append(f"{key.kid}:{key.key}")
+            if key.license_url:
+                s = urlsplit(key.license_url)
+                license_url = "{}://{}".format(s.scheme, s.netloc)
+            results["keys"].append(
+                {
+                    "added_at": key.added_at,
+                    # We shouldnt return the license url as that could have sensitive information it in still
+                    "license_url": license_url,
+                    "key": f"{key.kid}:{key.key}",
+                }
+            )
 
-        return results
         return results

@@ -20,4 +20,4 @@ class BaseService:
                 else yaml.safe_load(headers)
             )
         except Exception as e:
-            raise BadRequest(f"Wrong headers: {str(e)}")
+            raise BadRequest(f"Malformed Headers: {str(e)}")
