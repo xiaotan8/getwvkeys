@@ -107,7 +107,6 @@ class Library:
         return secrets.choice(self.SYSTEM_WVDS)
 
     def get_random_prd(self):
-        print(self.SYSTEM_PRDS)
         if len(self.SYSTEM_PRDS) == 0:
             raise Exception("No PRDs configured for rotation")
         return secrets.choice(self.SYSTEM_PRDS)
