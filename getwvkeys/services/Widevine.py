@@ -333,13 +333,20 @@ class Widevine(BaseService):
             "device": self.device,
             "session_id": self.session_id,
             "license_url": license_url,
+            "added_at": self.time,
         }
         for key in self.content_keys:
+            if key.license_url:
+                s = urlsplit(key.license_url)
+                license_url = "{}://{}".format(s.scheme, s.netloc)
+            else:
+                license_url = None
+
             results["keys"].append(
                 {
-                    "added_at": key.added_at,
-                    # We shouldnt return the license url as that could have sensitive information it in still
                     "key": f"{key.kid}:{key.key}",
+                    "license_url": license_url,
+                    "added_at": key.added_at,
                 }
             )
 
