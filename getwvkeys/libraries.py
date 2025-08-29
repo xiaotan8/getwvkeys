@@ -468,7 +468,6 @@ class Library:
         # Get PRDs enabled for rotation owned by system user
         prds: list[PRD] = PRD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
 
-        # only hash
         return (wvds, prds)
 
     def set_device_rotation_status(self, device_id: int, device_type: str, enabled: bool):

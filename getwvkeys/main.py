@@ -134,6 +134,27 @@ cache = Cache(app)
 # initialize blacklist class
 blacklist = Blacklist()
 
+# Initialize key count cache on startup
+with app.app_context():
+    try:
+        # Check if cache exists, if not initialize it
+        if not library.get_cached_keycount():
+            logger.info("Initializing key count cache on startup...")
+            library.update_cached_keycount()
+            logger.info(f"Key count cache initialized with {library.get_cached_keycount()} keys")
+
+        # Initialize system user on startup
+        from getwvkeys.user import FlaskUser
+
+        system_user = FlaskUser.get_system_user(db)
+        logger.info(f"System user initialized: {system_user.username} (ID: {system_user.id})")
+
+        # Build rotation device configuration cache from system user devices
+        wvds, prds = library.build_rotation_config_cache()
+        logger.info(f"Rotation config initialized: {len(wvds)} WVDs, {len(prds)} PRDs")
+    except Exception as e:
+        logger.error(f"Failed to initialize on startup: {e}")
+
 
 # Utilities
 def authentication_required(exempt_methods=[], flags_required: int = None, ignore_suspended: bool = False):
@@ -1118,28 +1139,6 @@ def user_get_cdms():
 
 
 def main():
-    # Initialize key count cache on startup
-    with app.app_context():
-        try:
-            # Check if cache exists, if not initialize it
-            if not library.get_cached_keycount():
-                logger.info("Initializing key count cache on startup...")
-                library.update_cached_keycount()
-                logger.info(f"Key count cache initialized with {library.get_cached_keycount()} keys")
-
-            # Initialize system user on startup
-            from getwvkeys.user import FlaskUser
-
-            system_user = FlaskUser.get_system_user(db)
-            logger.info(f"System user initialized: {system_user.username} (ID: {system_user.id})")
-
-            # Build rotation device configuration cache from system user devices
-            wvds, prds = library.build_rotation_config_cache()
-            logger.info(f"Rotation config initialized: {len(wvds)} WVDs, {len(prds)} PRDs")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize on startup: {e}")
-
     app.run(
         config.API_HOST,
         config.API_PORT,
