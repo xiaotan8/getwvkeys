@@ -28,6 +28,7 @@ from werkzeug.exceptions import BadRequest, Forbidden, NotFound
 
 from getwvkeys import config
 from getwvkeys.models.APIKey import APIKey as APIKey
+from getwvkeys.models.Key import Key
 from getwvkeys.models.PRD import PRD
 from getwvkeys.models.User import User
 from getwvkeys.models.WVD import WVD
@@ -262,6 +263,10 @@ class FlaskUser(UserMixin):
 
         if self.flags.has(UserFlags.SUSPENDED) == 1 and not ignore_suspended:
             raise Forbidden("Your account has been suspended.")
+
+    def get_key_count(self):
+        # query keys with added_by = self.id
+        return Key.query.filter_by(added_by=self.id).count()
 
     @staticmethod
     def is_api_key_valid(db: SQLAlchemy, api_key: str):

@@ -500,6 +500,7 @@ input[name="login"]:focus {
     margin-left: auto;
     margin-right: auto;
     max-width: 1080px;
+    gap: 16px;
 }
 .flex-column {
     display: flex;
@@ -551,9 +552,9 @@ input[name="login"]:focus {
     align-items: center;
     justify-content: flex-end;
 }
-.section-divider {
+/* .section-divider {
     margin: 32px 0 12px 0;
-}
+} */
 ul {
     list-style-type: none;
     margin: 0;
@@ -823,4 +824,12 @@ input:checked + .slider:before {
 
 .downgrade-item {
     display: none;
+}
+
+.keys {
+    align-items: center;
+}
+
+.keys > span {
+    font-weight: 100;
 }
