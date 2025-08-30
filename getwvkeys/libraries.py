@@ -475,9 +475,9 @@ class Library:
         system_user = FlaskUser.get_system_user(self.db)
 
         if device_type.lower() == "wvd":
-            device = WVD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+            device = next((d for d in system_user.user_model.wvds if d.id == device_id), None)
         elif device_type.lower() == "prd":
-            device = PRD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+            device = next((d for d in system_user.user_model.prds if d.id == device_id), None)
         else:
             raise BadRequest("Invalid device type")
 
