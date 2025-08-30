@@ -557,6 +557,58 @@ def upload_prd():
         )
 
 
+@app.route("/upload/system/wvd", methods=["GET", "POST"])
+@authentication_required()
+def upload_system_wvd():
+    if request.method == "POST":
+        wvd = request.files["wvd"]
+        enable_rotation = request.form.get("enable_rotation", "off")
+        # Convert enable_rotation to boolean
+        enable_rotation = enable_rotation == "on"
+        wvd_base = base64.b64encode(wvd.stream.read()).decode()
+        output = library.assign_system_wvd(wvd_base, enable_rotation)
+        return render_template(
+            "upload_complete.html",
+            page_title="Success",
+            device_hash=output,
+            website_version=website_version,
+            device_name="WVD",
+        )
+    elif request.method == "GET":
+        return render_template(
+            "upload_system.html",
+            current_user=current_user,
+            website_version=website_version,
+            device_name="WVD",
+        )
+
+
+@app.route("/upload/system/prd", methods=["GET", "POST"])
+@authentication_required()
+def upload_system_prd():
+    if request.method == "POST":
+        prd = request.files["prd"]
+        enable_rotation = request.form.get("enable_rotation", "off")
+        # Convert enable_rotation to boolean
+        enable_rotation = enable_rotation == "on"
+        prd_base = base64.b64encode(prd.stream.read()).decode()
+        output = library.assign_system_prd(prd_base, enable_rotation)
+        return render_template(
+            "upload_complete.html",
+            page_title="Success",
+            device_hash=output,
+            website_version=website_version,
+            device_name="PRD",
+        )
+    elif request.method == "GET":
+        return render_template(
+            "upload_system.html",
+            current_user=current_user,
+            website_version=website_version,
+            device_name="PRD",
+        )
+
+
 @app.route("/api", methods=["GET", "POST"])
 @authentication_required()
 def api():

@@ -112,14 +112,10 @@ class Library:
         return secrets.choice(self.SYSTEM_PRDS)
 
     def is_user_prd(self, device: str):
-        return next(
-            (False for entry in self.SYSTEM_PRDS if entry["code"] == device), False
-        )
+        return next((False for entry in self.SYSTEM_PRDS if entry["code"] == device), False)
 
     def is_user_wvd(self, device: str):
-        return next(
-            (False for entry in self.SYSTEM_WVDS if entry["code"] == device), False
-        )
+        return next((False for entry in self.SYSTEM_WVDS if entry["code"] == device), False)
 
     def cache_keys(self, cached_keys: list[CachedKey]):
         added_count = 0
@@ -183,9 +179,7 @@ class Library:
             cache_entry.count_value = actual_count
             cache_entry.last_updated = int(time.time())
         else:
-            cache_entry = KeyCountModel(
-                count_value=actual_count, last_updated=int(time.time())
-            )
+            cache_entry = KeyCountModel(count_value=actual_count, last_updated=int(time.time()))
             self.db.session.add(cache_entry)
 
         self.db.session.commit()
@@ -339,8 +333,9 @@ class Library:
 
         return DRMType.INVALID
 
-    def upload_prd(self, prd_data: str, user_id: str) -> str:
+    def upload_prd(self, prd_data: str, user_id: str, enable_rotation: bool = None) -> str:
         user = UserModel.query.filter_by(id=user_id).first()
+
         if not user:
             raise BadRequest("User not found")
 
@@ -359,7 +354,7 @@ class Library:
         # get device
         device = PRD.query.filter_by(hash=prd_hash).first()
         if not device:
-            device = PRD(uploaded_by=user.id, prd=prd_data, hash=prd_hash)
+            device = PRD(uploaded_by=user.id, prd=prd_data, hash=prd_hash, enabled_for_rotation=enable_rotation)
             self.db.session.add(device)
             user.prds.append(device)
             self.db.session.commit()
@@ -368,14 +363,13 @@ class Library:
             user.prds.append(device)
             self.db.session.commit()
         else:
-            raise BadRequest(
-                "PRD already uploaded, please use the existing hash found on the profile page."
-            )
+            raise BadRequest("PRD already uploaded, please use the existing hash found on the profile page.")
 
         return device.hash
 
-    def upload_wvd(self, wvd_data: str, user_id: str) -> str:
+    def upload_wvd(self, wvd_data: str, user_id: str, enable_rotation: bool = None) -> str:
         user = UserModel.query.filter_by(id=user_id).first()
+
         if not user:
             raise BadRequest("User not found")
 
@@ -394,7 +388,7 @@ class Library:
         # get device
         device = WVD.query.filter_by(hash=wvd_hash).first()
         if not device:
-            device = WVD(uploaded_by=user.id, wvd=wvd_data, hash=wvd_hash)
+            device = WVD(uploaded_by=user.id, wvd=wvd_data, hash=wvd_hash, enabled_for_rotation=enable_rotation)
             self.db.session.add(device)
             user.wvds.append(device)
             self.db.session.commit()
@@ -403,28 +397,23 @@ class Library:
             user.wvds.append(device)
             self.db.session.commit()
         else:
-            raise BadRequest(
-                "WVD already uploaded, please use the existing hash found on the profile page."
-            )
+            raise BadRequest("WVD already uploaded, please use the existing hash found on the profile page.")
 
         return device.hash
 
-    def assign_system_wvd(self, wvd_data: str) -> str:
+    def assign_system_wvd(self, wvd_data: str, enable_rotation: bool) -> str:
         """Assign a WVD to the system user"""
 
-        system_user = FlaskUser.get_system_user(self.db)
-        hash_val = self.upload_wvd(wvd_data, system_user.id)
+        hash_val = self.upload_wvd(wvd_data, "SYSTEM", enable_rotation)
 
         # Refresh rotation config cache since system devices changed
         self.build_rotation_config_cache()
 
         return hash_val
 
-    def assign_system_prd(self, prd_data: str) -> str:
+    def assign_system_prd(self, prd_data: str, enable_rotation: bool) -> str:
         """Assign a PRD to the system user"""
-
-        system_user = FlaskUser.get_system_user(self.db)
-        hash_val = self.upload_prd(prd_data, system_user.id)
+        hash_val = self.upload_prd(prd_data, "SYSTEM", enable_rotation)
 
         # Refresh rotation config cache since system devices changed
         self.build_rotation_config_cache()
@@ -465,9 +454,7 @@ class Library:
         # Refresh rotation config cache since system devices changed
         self.build_rotation_config_cache()
 
-        logger.info(
-            f"Migrated {len(device_hashes)} {device_type.upper()} devices to system user"
-        )
+        logger.info(f"Migrated {len(device_hashes)} {device_type.upper()} devices to system user")
 
     def get_rotation_devices(self) -> tuple[list[WVD], list[PRD]]:
         """Get all devices enabled for rotation (only system user devices)"""
@@ -475,32 +462,22 @@ class Library:
         system_user = FlaskUser.get_system_user(self.db)
 
         # Get WVDs enabled for rotation owned by system user
-        wvds: list[WVD] = WVD.query.filter_by(
-            uploaded_by=system_user.id, enabled_for_rotation=True
-        ).all()
+        wvds: list[WVD] = WVD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
 
         # Get PRDs enabled for rotation owned by system user
-        prds: list[PRD] = PRD.query.filter_by(
-            uploaded_by=system_user.id, enabled_for_rotation=True
-        ).all()
+        prds: list[PRD] = PRD.query.filter_by(uploaded_by=system_user.id, enabled_for_rotation=True).all()
 
         return (wvds, prds)
 
-    def set_device_rotation_status(
-        self, device_id: int, device_type: str, enabled: bool
-    ):
+    def set_device_rotation_status(self, device_id: int, device_type: str, enabled: bool):
         """Enable or disable a device for rotation (only system user devices)"""
 
         system_user = FlaskUser.get_system_user(self.db)
 
         if device_type.lower() == "wvd":
-            device = WVD.query.filter_by(
-                id=device_id, uploaded_by=system_user.id
-            ).first()
+            device = WVD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
         elif device_type.lower() == "prd":
-            device = PRD.query.filter_by(
-                id=device_id, uploaded_by=system_user.id
-            ).first()
+            device = PRD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
         else:
             raise BadRequest("Invalid device type")
 
@@ -510,9 +487,7 @@ class Library:
         device.enabled_for_rotation = enabled
         self.db.session.commit()
 
-        logger.info(
-            f"Set {device_type.upper()} device {device_id} rotation status to {enabled}"
-        )
+        logger.info(f"Set {device_type.upper()} device {device_id} rotation status to {enabled}")
         return device
 
     def build_rotation_config_cache(self) -> list[str]:
@@ -522,9 +497,7 @@ class Library:
         self.SYSTEM_WVDS = [x.hash for x in wvds]
         self.SYSTEM_PRDS = [x.hash for x in prds]
 
-        logger.info(
-            f"Updated rotation config cache: {len(wvds)} WVDs, {len(prds)} PRDs"
-        )
+        logger.info(f"Updated rotation config cache: {len(wvds)} WVDs, {len(prds)} PRDs")
         return (wvds, prds)
 
     def add_keys(self, keys: list, user_id: str):
@@ -572,9 +545,7 @@ class Library:
 
         raise BadRequest("invalid device type")
 
-    def remote_cdm_get_keys_impl(
-        self, cdm: Union[WidevineCdm, PlayreadyCdm], session_id: bytes, key_type: str
-    ):
+    def remote_cdm_get_keys_impl(self, cdm: Union[WidevineCdm, PlayreadyCdm], session_id: bytes, key_type: str):
         if isinstance(cdm, WidevineCdm):
             if key_type == "ALL":
                 key_type = None
@@ -620,9 +591,7 @@ class Library:
 
         return session_id
 
-    def remote_cdm_parse_init_data(
-        self, cdm_id: str, init_data: str
-    ) -> Union[WidevinePSSH, PlayreadyPSSH]:
+    def remote_cdm_parse_init_data(self, cdm_id: str, init_data: str) -> Union[WidevinePSSH, PlayreadyPSSH]:
         if cdm_id == "widevine":
             return WidevinePSSH(init_data)
         else:
@@ -657,17 +626,13 @@ class Library:
                     if pssh.wrm_headers:
                         init_data = pssh.wrm_headers[0]
                 except PlayreadyInvalidPssh as e:
-                    return jsonify(
-                        {"status": 500, "message": f"Unable to parse PSSH: {e}"}
-                    )
+                    return jsonify({"status": 500, "message": f"Unable to parse PSSH: {e}"})
             challenge = cdm.get_license_challenge(
                 session_id=session_id,
                 wrm_header=init_data,
             )
 
-            return jsonify(
-                {"status": 200, "message": "Success", "data": {"challenge": challenge}}
-            )
+            return jsonify({"status": 200, "message": "Success", "data": {"challenge": challenge}})
 
         raise BadRequest("Invalid cdm")
 
@@ -747,9 +712,7 @@ class Library:
             }
         )
 
-    def remote_cdm_set_service_certificate(
-        self, cdm_id: str, device_name: str, session_id: bytes, certificate: str
-    ):
+    def remote_cdm_set_service_certificate(self, cdm_id: str, device_name: str, session_id: bytes, certificate: str):
         cdm = sessions.get(session_id.hex())
         if not cdm:
             return (
@@ -776,9 +739,7 @@ class Library:
             )
         except DecodeError as e:
             return (
-                jsonify(
-                    {"status": 400, "message": f"Invalid Service Certificate: {e}"}
-                ),
+                jsonify({"status": 400, "message": f"Invalid Service Certificate: {e}"}),
                 400,
             )
         except WidevineSignatureMismatch:
@@ -800,9 +761,7 @@ class Library:
             }
         )
 
-    def remote_cdm_get_service_certificate(
-        self, cdm_id: str, device_name: str, session_id: bytes
-    ):
+    def remote_cdm_get_service_certificate(self, cdm_id: str, device_name: str, session_id: bytes):
         cdm = sessions.get(session_id.hex())
         if not cdm:
             return (
@@ -863,9 +822,7 @@ class Library:
         # TODO: enforce privacy mode option?
 
         try:
-            return self.remote_cdm_get_challenge(
-                cdm, session_id, init_data, license_type
-            )
+            return self.remote_cdm_get_challenge(cdm, session_id, init_data, license_type)
         except (
             PlayreadyInvalidPssh,
             PlayreadyInvalidInitData,
@@ -898,9 +855,7 @@ class Library:
                 400,
             )
 
-    def remote_cdm_parse_license(
-        self, cdm_id: str, device_name: str, session_id: bytes, license_message: str
-    ):
+    def remote_cdm_parse_license(self, cdm_id: str, device_name: str, session_id: bytes, license_message: str):
         cdm = sessions.get(session_id.hex())
         if not cdm:
             return (
@@ -986,9 +941,7 @@ class Library:
                     for key in keys
                 ]
             )
-            return jsonify(
-                {"status": 200, "message": "Success", "data": {"keys": keys}}
-            )
+            return jsonify({"status": 200, "message": "Success", "data": {"keys": keys}})
         except (WidevineInvalidSession, PlayReadyInvalidSession):
             return (
                 jsonify(
@@ -1001,8 +954,6 @@ class Library:
             )
         except ValueError as e:
             return (
-                jsonify(
-                    {"status": 400, "message": f"Invalid Key Type '{key_type}': {e}"}
-                ),
+                jsonify({"status": 400, "message": f"Invalid Key Type '{key_type}': {e}"}),
                 400,
             )

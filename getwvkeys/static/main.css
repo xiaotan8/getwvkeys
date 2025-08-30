@@ -467,7 +467,7 @@ input[name="login"]:focus {
     display: none;
     position: absolute;
     background-color: #36333c;
-    min-width: 160px;
+    min-width: 200px;
     z-index: 1;
     box-shadow: 5px 5px 15px rgba(0, 0, 0, 0.4);
     -webkit-box-shadow: 5px 5px 15px rgba(0, 0, 0, 0.4);

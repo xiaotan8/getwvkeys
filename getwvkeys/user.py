@@ -257,6 +257,9 @@ class FlaskUser(UserMixin):
     def is_system_user(self):
         return self.flags.has(UserFlags.SYSTEM)
 
+    def is_admin(self):
+        return self.flags.has(UserFlags.ADMIN)
+
     def check_status(self, ignore_suspended=False):
         if self.is_system_user():
             raise Forbidden("System users cannot login or access the API.")
