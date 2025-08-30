@@ -1051,7 +1051,6 @@ def user_get_prds():
 @app.route("/admin/system-devices")
 @authentication_required(flags_required=UserFlags.ADMIN)
 def admin_system_devices():
-    # Return the HTML page
     return render_template(
         "admin_devices.html",
         current_user=current_user,
@@ -1064,10 +1063,8 @@ def admin_system_devices():
 def admin_get_system_devices():
     try:
         system_user = FlaskUser.get_system_user(db)
-
-        # Get all devices with owner information
-        wvds: list[WVD] = WVD.query.filter_by(uploaded_by=system_user.id).all()
-        prds: list[PRD] = PRD.query.filter_by(uploaded_by=system_user.id).all()
+        wvds = system_user.user_model.wvds
+        prds = system_user.user_model.prds
 
         wvd_data = []
         for wvd in wvds:
