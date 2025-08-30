@@ -63,13 +63,24 @@ from alembic.config import Config
 from getwvkeys import config, libraries
 
 # these need to be kept
+from getwvkeys.models.PRD import PRD
 from getwvkeys.models.Shared import db
 from getwvkeys.models.TrafficLog import TrafficLog
+from getwvkeys.models.User import User
+from getwvkeys.models.WVD import WVD
 from getwvkeys.redis import Redis
 from getwvkeys.services.PlayReady import PlayReady
 from getwvkeys.services.Widevine import Widevine
 from getwvkeys.user import FlaskUser
-from getwvkeys.utils import Blacklist, DRMType, UserFlags, Validators, construct_logger
+from getwvkeys.utils import (
+    Blacklist,
+    DRMType,
+    UserFlags,
+    Validators,
+    construct_logger,
+    prd_to_dict,
+    wvd_to_dict,
+)
 
 app = Flask(__name__.split(".")[0], root_path=str(Path(__file__).parent))
 app.config["SQLALCHEMY_DATABASE_URI"] = config.SQLALCHEMY_DATABASE_URI
@@ -1037,6 +1048,111 @@ def user_get_prds():
     return jsonify({"status_code": 200, "message": user_prds})
 
 
+@app.route("/admin/system-devices")
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_system_devices():
+    # Return the HTML page
+    return render_template(
+        "admin_devices.html",
+        current_user=current_user,
+        website_version=website_version,
+    )
+
+
+@app.route("/admin/api-system-devices", methods=["GET"])
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_get_system_devices():
+    try:
+        system_user = FlaskUser.get_system_user(db)
+
+        # Get all devices with owner information
+        wvds: list[WVD] = WVD.query.filter_by(uploaded_by=system_user.id).all()
+        prds: list[PRD] = PRD.query.filter_by(uploaded_by=system_user.id).all()
+
+        wvd_data = []
+        for wvd in wvds:
+            device = wvd.to_device()
+            wvd_data.append(
+                {
+                    **wvd_to_dict(device),
+                    "hash": wvd.hash,
+                    "id": wvd.id,
+                    "enabled_for_rotation": wvd.enabled_for_rotation,
+                }
+            )
+
+        prd_data = []
+        for prd in prds:
+            device = prd.to_device()
+            prd_data.append(
+                {
+                    **prd_to_dict(device),
+                    "hash": prd.hash,
+                    "id": prd.id,
+                    "enabled_for_rotation": prd.enabled_for_rotation,
+                }
+            )
+
+        return jsonify({"wvds": wvd_data, "prds": prd_data})
+    except Exception as e:
+        logger.error(f"Error getting system devices: {e}")
+        return jsonify({"error": True, "message": str(e)}), 500
+
+
+@app.route("/admin/system-devices/<device_type>/<int:device_id>/rotation", methods=["PATCH"])
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_toggle_device_rotation(device_type, device_id):
+    try:
+        event_data = request.get_json()
+        enabled = event_data.get("enabled", False)
+
+        device = library.set_device_rotation_status(device_id, device_type, enabled)
+
+        # Rebuild rotation config cache
+        library.build_rotation_config_cache()
+
+        action = "enabled" if enabled else "disabled"
+        return jsonify(
+            {
+                "message": f"{device_type.upper()} device rotation {action} successfully",
+                "device_id": device_id,
+                "enabled": enabled,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error toggling device rotation: {e}")
+        return jsonify({"error": True, "message": str(e)}), 400
+
+
+@app.route("/admin/system-devices/<device_type>/<int:device_id>", methods=["DELETE"])
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_delete_system_device(device_type, device_id):
+    try:
+        system_user = FlaskUser.get_system_user(db)
+
+        if device_type.lower() == "wvd":
+            device = WVD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+        elif device_type.lower() == "prd":
+            device = PRD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+        else:
+            raise BadRequest("Invalid device type")
+
+        if not device:
+            raise BadRequest("Device not found or not owned by system user")
+
+        # Remove device from database
+        db.session.delete(device)
+        db.session.commit()
+
+        # Rebuild rotation config cache
+        library.build_rotation_config_cache()
+
+        return jsonify({"message": f"{device_type.upper()} device deleted successfully", "device_id": device_id})
+    except Exception as e:
+        logger.error(f"Error deleting device: {e}")
+        return jsonify({"error": True, "message": str(e)}), 400
+
+
 # error handlers
 @app.errorhandler(DatabaseError)
 def database_error(e: Exception):
@@ -1197,6 +1313,15 @@ def main():
         debug=config.IS_DEVELOPMENT,
         use_reloader=False,
     )
+
+
+def run_migrations():
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
+
+if __name__ == "__main__":
+    main()
 
 
 def run_migrations():

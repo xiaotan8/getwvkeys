@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+from pywidevine import Device
 from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
@@ -43,3 +44,6 @@ class WVD(Base):
             "hash": self.hash,
             "enabled_for_rotation": self.enabled_for_rotation,
         }
+
+    def to_device(self):
+        return Device.loads(self.wvd)

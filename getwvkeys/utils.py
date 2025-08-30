@@ -23,7 +23,9 @@ from typing import Union
 
 from cerberus import Validator
 from coloredlogs import ColoredFormatter
+from pyplayready import Device as PlayreadyDevice
 from pywidevine import PSSH as WidevinePSSH
+from pywidevine import Device as WidevineDevice
 
 from getwvkeys import config
 
@@ -251,3 +253,19 @@ class DRMType(Enum):
 
     def is_invalid(self) -> bool:
         return self == DRMType.INVALID
+
+
+def wvd_to_dict(device: WidevineDevice) -> dict:
+    return {
+        "type": device.type.name,
+        "security_level": device.security_level,
+        "flags": device.flags,
+        "system_id": device.system_id,
+    }
+
+
+def prd_to_dict(device: PlayreadyDevice) -> dict:
+    return {
+        "name": device.get_name(),
+        "security_level": PlayreadyDevice.SecurityLevel(device.security_level).name,
+    }
