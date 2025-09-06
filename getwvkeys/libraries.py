@@ -19,6 +19,7 @@ import base64
 import hashlib
 import logging
 import secrets
+import sqlite3
 import time
 import uuid
 from typing import Union
@@ -957,3 +958,135 @@ class Library:
                 jsonify({"status": 400, "message": f"Invalid Key Type '{key_type}': {e}"}),
                 400,
             )
+
+    def validate_sqlite_database(self, file_path: str) -> dict:
+        """
+        Validate the SQLite database structure and return information about tables and keys.
+        Returns a dictionary with validation results.
+        """
+        try:
+            conn = sqlite3.connect(file_path)
+            cursor = conn.cursor()
+
+            # Get all table names, excluding SQLite system tables
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+            tables = cursor.fetchall()
+
+            if not tables:
+                return {"valid": False, "error": "No tables found in database (excluding system tables)"}
+
+            table_info = []
+            total_keys = 0
+
+            for (table_name,) in tables:
+                # Check table structure
+                cursor.execute(f"PRAGMA table_info({table_name})")
+                columns = cursor.fetchall()
+
+                # Validate required columns exist
+                column_names = [col[1].lower() for col in columns]
+                required_columns = ["id", "kid", "key_"]
+
+                if not all(col in column_names for col in required_columns):
+                    return {
+                        "valid": False,
+                        "error": f"Table '{table_name}' missing required columns. Expected: id, kid, key_",
+                    }
+
+                # Check data types and constraints
+                id_col = next((col for col in columns if col[1].lower() == "id"), None)
+                if not id_col or id_col[2].upper() != "INTEGER":
+                    return {"valid": False, "error": f"Table '{table_name}' 'id' column must be INTEGER type"}
+
+                # Count keys in this table
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                key_count = cursor.fetchone()[0]
+                total_keys += key_count
+
+                table_info.append({"name": table_name, "count": key_count})
+
+            conn.close()
+
+            return {"valid": True, "tables": table_info, "total_tables": len(tables), "total_keys": total_keys}
+
+        except sqlite3.Error as e:
+            return {"valid": False, "error": f"SQLite error: {str(e)}"}
+        except Exception as e:
+            return {"valid": False, "error": f"Validation error: {str(e)}"}
+
+    def import_keys_from_database(self, file_path: str, user_id: str, preview_mode: bool = False) -> dict:
+        validation_result = self.validate_sqlite_database(file_path)
+
+        if not validation_result["valid"]:
+            return validation_result
+
+        if preview_mode:
+            return {
+                "success": True,
+                "preview_mode": True,
+                "summary": {
+                    "total_tables": validation_result["total_tables"],
+                    "total_keys": validation_result["total_keys"],
+                    "imported_keys": 0,
+                    "skipped_keys": 0,
+                },
+                "tables": validation_result["tables"],
+            }
+
+        try:
+            conn = sqlite3.connect(file_path)
+            cursor = conn.cursor()
+
+            cached_keys = []
+            imported_count = 0
+            skipped_count = 0
+            current_time = int(time.time())
+
+            for table_info in validation_result["tables"]:
+                table_name = table_info["name"]
+
+                # Get all keys from this table
+                cursor.execute(f"SELECT kid, key_ FROM {table_name}")
+                rows = cursor.fetchall()
+
+                for kid, key in rows:
+                    if not kid or not key:
+                        skipped_count += 1
+                        continue
+
+                    # Clean and validate kid format
+                    kid_clean = str(kid).replace("-", "").lower()
+                    if len(kid_clean) != 32:
+                        skipped_count += 1
+                        continue
+
+                    cached_keys.append(
+                        CachedKey(
+                            kid=kid_clean,
+                            added_at=current_time,
+                            added_by=user_id,
+                            license_url=f"http://DATABASE_IMPORT_{table_name}.local",
+                            key=str(key),
+                        )
+                    )
+
+            conn.close()
+
+            imported_count = self.cache_keys(cached_keys)
+            skipped_count = len(cached_keys) - imported_count
+
+            return {
+                "success": True,
+                "preview_mode": False,
+                "summary": {
+                    "total_tables": validation_result["total_tables"],
+                    "total_keys": validation_result["total_keys"],
+                    "imported_keys": imported_count,
+                    "skipped_keys": skipped_count,
+                },
+                "tables": validation_result["tables"],
+            }
+
+        except Exception as e:
+            logger.exception(e)
+            return {"success": False, "error": f"Import error: {str(e)}"}

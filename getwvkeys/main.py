@@ -17,8 +17,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import base64
 import json
+import mimetypes
 import os
 import pathlib
+import tempfile
 import threading
 import time
 from datetime import datetime, timezone
@@ -1148,6 +1150,121 @@ def admin_delete_system_device(device_type, device_id):
     except Exception as e:
         logger.error(f"Error deleting device: {e}")
         return jsonify({"error": True, "message": str(e)}), 400
+
+
+@app.route("/upload/database", methods=["GET", "POST"])
+@authentication_required(flags_required=UserFlags.KEY_ADDING)
+def upload_database():
+    if request.method == "GET":
+        return render_template(
+            "upload_db.html",
+            page_title="Upload Database",
+            current_user=current_user,
+            website_version=website_version,
+        )
+
+    elif request.method == "POST":
+        if "database" not in request.files:
+            return render_template(
+                "upload_db_result.html",
+                page_title="Upload Failed",
+                error="No database file provided",
+                current_user=current_user,
+                website_version=website_version,
+            )
+
+        db_file = request.files["database"]
+        preview_mode = request.form.get("preview") == "on"
+
+        if db_file.filename == "":
+            return render_template(
+                "upload_db_result.html",
+                page_title="Upload Failed",
+                error="No file selected",
+                current_user=current_user,
+                website_version=website_version,
+            )
+
+        # Validate file extension
+        valid_extensions = [".db", ".sqlite", ".sqlite3", ".db3"]
+        if not any(db_file.filename.lower().endswith(ext) for ext in valid_extensions):
+            return render_template(
+                "upload_db_result.html",
+                page_title="Upload Failed",
+                error="Invalid file extension. Please use .db, .sqlite, .sqlite3, or .db3",
+                current_user=current_user,
+                website_version=website_version,
+            )
+
+        # Validate MIME type (server-side)
+        mime_type, _ = mimetypes.guess_type(db_file.filename)
+        valid_mime_types = [
+            "application/x-sqlite3",
+            "application/vnd.sqlite3",
+        ]
+
+        if mime_type not in valid_mime_types:
+            # Additional check by reading file header
+            db_file.seek(0)
+            header = db_file.read(16)
+            db_file.seek(0)
+
+            if not header.startswith(b"SQLite format 3\x00"):
+                return render_template(
+                    "upload_db_result.html",
+                    page_title="Upload Failed",
+                    error="Invalid file format. File is not a valid SQLite database.",
+                    current_user=current_user,
+                    website_version=website_version,
+                )
+
+        # Save uploaded file to temporary location
+        temp_file = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as temp_file:
+                db_file.save(temp_file.name)
+                temp_file_path = temp_file.name
+
+            # Import keys from database
+            result = library.import_keys_from_database(temp_file_path, current_user.id, preview_mode)
+
+            if result.get("success"):
+                page_title = "Preview Results" if result["preview_mode"] else "Import Complete"
+                return render_template(
+                    "upload_db_result.html",
+                    page_title=page_title,
+                    summary=result["summary"],
+                    tables=result["tables"],
+                    preview_mode=result["preview_mode"],
+                    current_user=current_user,
+                    website_version=website_version,
+                )
+            else:
+                return render_template(
+                    "upload_db_result.html",
+                    page_title="Upload Failed",
+                    error=result.get("error", "Unknown error occurred"),
+                    current_user=current_user,
+                    website_version=website_version,
+                )
+
+        except Exception as e:
+            logger.exception(e)
+            return render_template(
+                "upload_db_result.html",
+                page_title="Upload Failed",
+                error=f"An error occurred while processing the database: {str(e)}",
+                current_user=current_user,
+                website_version=website_version,
+            )
+
+        finally:
+            # Clean up temporary file
+            if temp_file and os.path.exists(temp_file.name):
+                try:
+                    os.unlink(temp_file.name)
+                except:
+                    pass
 
 
 # error handlers

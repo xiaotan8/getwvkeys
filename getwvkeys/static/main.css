@@ -833,3 +833,22 @@ input:checked + .slider:before {
 .keys > span {
     font-weight: 100;
 }
+
+button[type="submit"] {
+    border-radius: 4px;
+    color: #fffffe;
+    font-size: 1.125rem;
+    background-color: #7f5af0;
+    border: 0;
+    margin-top: 24px;
+    padding: 12px 48px;
+    transition: transform 0.2s ease-in;
+}
+button[type="submit"]:disabled {
+    background-color: #6146b1;
+}
+button[type="submit"]:hover {
+    transform: scale(1.02);
+    cursor: pointer;
+    background-color: #6146b1;
+}
