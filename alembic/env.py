@@ -17,6 +17,7 @@ from getwvkeys.models import (
     User,
     UserPRD,
     UserWVD,
+    ImportTask
 )
 
 IS_DEVELOPMENT = bool(os.environ.get("DEVELOPMENT", False))

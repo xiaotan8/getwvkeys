@@ -15,6 +15,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import atexit
 import base64
 import json
 import mimetypes
@@ -34,6 +35,7 @@ from dunamai import Version
 from flask import (
     Flask,
     Request,
+    current_app,
     g,
     jsonify,
     make_response,
@@ -43,6 +45,7 @@ from flask import (
     send_file,
     send_from_directory,
     session,
+    url_for,
 )
 from flask_caching import Cache
 from flask_login import LoginManager, current_user, login_user, logout_user
@@ -59,12 +62,15 @@ from werkzeug.exceptions import (
     UnsupportedMediaType,
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import secure_filename
 
 from alembic import command
 from alembic.config import Config
 from getwvkeys import config, libraries
 
 # these need to be kept
+from getwvkeys.import_worker import ImportWorker
+from getwvkeys.models.ImportTask import ImportTask
 from getwvkeys.models.PRD import PRD
 from getwvkeys.models.Shared import db
 from getwvkeys.models.TrafficLog import TrafficLog
@@ -106,6 +112,11 @@ website_version = Version.from_git().serialize(
 
 # create library instance
 library = libraries.Library(db)
+
+app.import_worker = ImportWorker(library, app)
+app.import_worker.start()
+atexit.register(lambda: app.import_worker.stop())
+
 
 # create validators instance
 validators = Validators()
@@ -182,12 +193,7 @@ def authentication_required(exempt_methods=[], flags_required: int = None, ignor
             # handle api keys
             if not current_user.is_authenticated:
                 # check if they passed in an api key
-                api_key = (
-                    request.headers.get("X-API-Key")
-                    or request.form.get("X-API-Key")
-                    or request.headers.get("Authorization")
-                    or request.form.get("Authorization")
-                )
+                api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization")
                 if not api_key:
                     raise Unauthorized("API Key Required")
 
@@ -1153,118 +1159,123 @@ def admin_delete_system_device(device_type, device_id):
 
 
 @app.route("/upload/database", methods=["GET", "POST"])
-@authentication_required(flags_required=UserFlags.KEY_ADDING)
 def upload_database():
     if request.method == "GET":
-        return render_template(
-            "upload_db.html",
-            page_title="Upload Database",
-            current_user=current_user,
-            website_version=website_version,
-        )
+        return render_template("upload_db.html")
 
-    elif request.method == "POST":
-        if "database" not in request.files:
-            return render_template(
+    if "database" not in request.files:
+        return (
+            render_template(
                 "upload_db_result.html",
-                page_title="Upload Failed",
-                error="No database file provided",
+                error="No file uploaded",
                 current_user=current_user,
                 website_version=website_version,
-            )
+            ),
+            400,
+        )
 
-        db_file = request.files["database"]
-        preview_mode = request.form.get("preview") == "on"
-
-        if db_file.filename == "":
-            return render_template(
+    file = request.files["database"]
+    if file.filename == "":
+        return (
+            render_template(
                 "upload_db_result.html",
-                page_title="Upload Failed",
                 error="No file selected",
                 current_user=current_user,
                 website_version=website_version,
-            )
+            ),
+            400,
+        )
 
-        # Validate file extension
-        valid_extensions = [".db", ".sqlite", ".sqlite3", ".db3"]
-        if not any(db_file.filename.lower().endswith(ext) for ext in valid_extensions):
+    valid_extensions = [".db", ".sqlite", ".sqlite3", ".db3"]
+    if not any(file.filename.lower().endswith(ext) for ext in valid_extensions):
+        return (
+            render_template(
+                "upload_db_result.html",
+                error="Invalid file type",
+                current_user=current_user,
+                website_version=website_version,
+            ),
+            400,
+        )
+
+    preview_mode = request.form.get("preview") == "on"
+
+    try:
+        filename = secure_filename(file.filename)
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, filename)
+        print(temp_path)
+        file.save(temp_path)
+
+        if preview_mode:
+            result = library.validate_sqlite_database(temp_path)
+
+            os.remove(temp_path)
+
+            if not result["valid"]:
+                return render_template("upload_db_result.html", error=result["error"]), 400
+
             return render_template(
                 "upload_db_result.html",
-                page_title="Upload Failed",
-                error="Invalid file extension. Please use .db, .sqlite, .sqlite3, or .db3",
+                preview_mode=True,
+                summary={
+                    "total_tables": result["total_tables"],
+                    "total_keys": result["total_keys"],
+                    "imported_keys": 0,
+                    "skipped_keys": 0,
+                },
+                tables=result["tables"],
                 current_user=current_user,
                 website_version=website_version,
             )
+        else:
+            import_worker = current_app.import_worker
+            task_id = import_worker.create_task(current_user.id, filename, temp_path)
 
-        # Validate MIME type (server-side)
-        mime_type, _ = mimetypes.guess_type(db_file.filename)
-        valid_mime_types = [
-            "application/x-sqlite3",
-            "application/vnd.sqlite3",
-        ]
+            os.remove(temp_path)
 
-        if mime_type not in valid_mime_types:
-            # Additional check by reading file header
-            db_file.seek(0)
-            header = db_file.read(16)
-            db_file.seek(0)
+            return redirect(url_for("import_progress", task_id=task_id))
 
-            if not header.startswith(b"SQLite format 3\x00"):
-                return render_template(
-                    "upload_db_result.html",
-                    page_title="Upload Failed",
-                    error="Invalid file format. File is not a valid SQLite database.",
-                    current_user=current_user,
-                    website_version=website_version,
-                )
+    except Exception as e:
+        if "temp_path" in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+        return render_template("upload_db_result.html", error=str(e)), 500
 
-        # Save uploaded file to temporary location
-        temp_file = None
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".db") as temp_file:
-                db_file.save(temp_file.name)
-                temp_file_path = temp_file.name
 
-            # Import keys from database
-            result = library.import_keys_from_database(temp_file_path, current_user.id, preview_mode)
+@app.route("/upload/database/progress/<task_id>")
+def import_progress(task_id):
+    """Show import progress page"""
+    return render_template(
+        "upload_db_progress.html",
+        task_id=task_id,
+        current_user=current_user,
+        website_version=website_version,
+    )
 
-            if result.get("success"):
-                page_title = "Preview Results" if result["preview_mode"] else "Import Complete"
-                return render_template(
-                    "upload_db_result.html",
-                    page_title=page_title,
-                    summary=result["summary"],
-                    tables=result["tables"],
-                    preview_mode=result["preview_mode"],
-                    current_user=current_user,
-                    website_version=website_version,
-                )
-            else:
-                return render_template(
-                    "upload_db_result.html",
-                    page_title="Upload Failed",
-                    error=result.get("error", "Unknown error occurred"),
-                    current_user=current_user,
-                    website_version=website_version,
-                )
 
-        except Exception as e:
-            logger.exception(e)
-            return render_template(
-                "upload_db_result.html",
-                page_title="Upload Failed",
-                error=f"An error occurred while processing the database: {str(e)}",
-                current_user=current_user,
-                website_version=website_version,
-            )
+@app.route("/api/import/status/<task_id>")
+def import_status(task_id):
+    """API endpoint to get import task status"""
+    from getwvkeys.libraries import Library
+    from getwvkeys.models.Shared import db
 
-        finally:
-            # Clean up temporary file
-            if temp_file and os.path.exists(temp_file.name):
-                try:
-                    os.unlink(temp_file.name)
-                except:
-                    pass
+    library = Library(db)
+    status = library.get_import_task_status(task_id)
+
+    return jsonify(status)
+
+
+@app.route("/api/import/worker/status")
+def worker_status():
+    status = current_app.import_worker.get_status()
+
+    with current_app.app_context():
+        pending = ImportTask.query.filter_by(status="pending").count()
+        running = ImportTask.query.filter_by(status="running").count()
+
+    status.update({"pending_tasks": pending, "running_tasks": running})
+
+    return jsonify(status)
 
 
 # error handlers

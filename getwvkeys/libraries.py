@@ -1014,7 +1014,9 @@ class Library:
         except Exception as e:
             return {"valid": False, "error": f"Validation error: {str(e)}"}
 
-    def import_keys_from_database(self, file_path: str, user_id: str, preview_mode: bool = False) -> dict:
+    def import_keys_from_database(
+        self, file_path: str, user_id: str, preview_mode: bool = False, progress_callback=None
+    ) -> dict:
         validation_result = self.validate_sqlite_database(file_path)
 
         if not validation_result["valid"]:
@@ -1037,43 +1039,71 @@ class Library:
             conn = sqlite3.connect(file_path)
             cursor = conn.cursor()
 
-            cached_keys = []
-            imported_count = 0
-            skipped_count = 0
+            batch_size = 10000  # Process 10k keys at a time
+            total_imported = 0
+            total_skipped = 0
+            total_processed = 0
             current_time = int(time.time())
 
             for table_info in validation_result["tables"]:
                 table_name = table_info["name"]
+                table_total = table_info["count"]
 
-                # Get all keys from this table
-                cursor.execute(f"SELECT kid, key_ FROM {table_name}")
-                rows = cursor.fetchall()
+                if progress_callback:
+                    progress_callback(f"Processing table: {table_name} ({table_total} rows)")
 
-                for kid, key in rows:
-                    if not kid or not key:
-                        skipped_count += 1
-                        continue
+                # Process table in batches using LIMIT and OFFSET
+                offset = 0
+                while offset < table_total:
+                    cached_keys = []
 
-                    # Clean and validate kid format
-                    kid_clean = str(kid).replace("-", "").lower()
-                    if len(kid_clean) != 32:
-                        skipped_count += 1
-                        continue
+                    # Fetch batch
+                    cursor.execute(f"SELECT kid, key_ FROM {table_name} LIMIT {batch_size} OFFSET {offset}")
+                    rows = cursor.fetchall()
 
-                    cached_keys.append(
-                        CachedKey(
-                            kid=kid_clean,
-                            added_at=current_time,
-                            added_by=user_id,
-                            license_url=f"http://DATABASE_IMPORT_{table_name}.local",
-                            key=str(key),
+                    if not rows:
+                        break
+
+                    # Process batch
+                    for kid, key in rows:
+                        total_processed += 1
+
+                        if not kid or not key:
+                            total_skipped += 1
+                            continue
+
+                        # Clean and validate kid format
+                        kid_clean = str(kid).replace("-", "").lower()
+                        if len(kid_clean) != 32:
+                            total_skipped += 1
+                            continue
+
+                        cached_keys.append(
+                            CachedKey(
+                                kid=kid_clean,
+                                added_at=current_time,
+                                added_by=user_id,
+                                license_url=f"http://DATABASE_IMPORT_{table_name}.local",
+                                key=str(key),
+                            )
                         )
-                    )
+
+                    # Import batch
+                    if cached_keys:
+                        batch_imported = self.cache_keys(cached_keys)
+                        total_imported += batch_imported
+                        batch_skipped = len(cached_keys) - batch_imported
+                        total_skipped += batch_skipped
+
+                    offset += batch_size
+
+                    if progress_callback:
+                        progress_callback(
+                            f"  [{table_name}] Processed: {min(offset, table_total)}/{table_total} | "
+                            f"Imported: {total_imported} | Skipped: {total_skipped}"
+                        )
 
             conn.close()
-
-            imported_count = self.cache_keys(cached_keys)
-            skipped_count = len(cached_keys) - imported_count
 
             return {
                 "success": True,
@@ -1081,8 +1111,8 @@ class Library:
                 "summary": {
                     "total_tables": validation_result["total_tables"],
                     "total_keys": validation_result["total_keys"],
-                    "imported_keys": imported_count,
-                    "skipped_keys": skipped_count,
+                    "imported_keys": total_imported,
+                    "skipped_keys": total_skipped,
                 },
                 "tables": validation_result["tables"],
             }
@@ -1090,3 +1120,13 @@ class Library:
         except Exception as e:
             logger.exception(e)
             return {"success": False, "error": f"Import error: {str(e)}"}
+
+    def get_import_task_status(self, task_id: str) -> dict:
+        """Get the status of an import task"""
+        from getwvkeys.models.ImportTask import ImportTask
+
+        task = ImportTask.query.filter_by(id=task_id).first()
+        if not task:
+            return {"error": "Task not found"}
+
+        return task.to_dict()

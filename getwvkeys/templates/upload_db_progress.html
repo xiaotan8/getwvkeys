@@ -1,0 +1,319 @@
+{% extends "base.html" %} {% block content %}
+<style>
+    h2 {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    .progress-container {
+        max-width: 800px;
+        margin: 20px auto;
+        padding: 20px;
+        background-color: hsla(0, 0%, 100%, 0.05);
+        border-radius: 5px;
+        display: flex;
+        flex-flow: column nowrap;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 3px;
+        font-size: 14px;
+        font-weight: bold;
+        margin-bottom: 10px;
+        align-self: center;
+    }
+
+    .status-pending {
+        background: #ffc107;
+        color: #000;
+    }
+
+    .status-running {
+        background: #17a2b8;
+        color: white;
+    }
+
+    .status-completed {
+        background: #28a745;
+        color: white;
+    }
+
+    .status-failed {
+        background: #dc3545;
+        color: white;
+    }
+
+    .progress-section {
+        margin: 20px 0;
+    }
+
+    .progress-bar-container {
+        width: 100%;
+        height: 30px;
+        background: #36333c;
+        border-radius: 5px;
+        overflow: hidden;
+        margin: 10px 0;
+        position: relative;
+        display: flex;
+    }
+
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #7f5af0, #5a3fc7);
+        transition: width 0.3s ease;
+        display: flex;
+        align-items: center;
+        color: white;
+        font-weight: bold;
+    }
+
+    .progress-text {
+        position: absolute;
+        left: 50%;
+        align-self: center;
+    }
+
+    .progress-bar.completed {
+        background: linear-gradient(90deg, #28a745, #1e7e34);
+    }
+
+    .progress-bar.failed {
+        background: linear-gradient(90deg, #dc3545, #c82333);
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(150px, 1fr));
+        gap: 15px;
+        margin: 20px 0;
+    }
+
+    .stat-card {
+        background: #36333c;
+        padding: 15px;
+        border-radius: 5px;
+        text-align: center;
+    }
+
+    .stat-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #7f5af0;
+        margin: 5px 0;
+    }
+
+    .stat-label {
+        font-size: 12px;
+        color: #999;
+        text-transform: uppercase;
+    }
+
+    .current-task {
+        background: #36333c;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 10px 0;
+        font-family: monospace;
+    }
+
+    .error-box {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+        padding: 15px;
+        border-radius: 5px;
+        margin: 20px 0;
+    }
+
+    .actions {
+        margin-top: 20px;
+        text-align: center;
+    }
+
+    .btn {
+        display: inline-block;
+        padding: 10px 20px;
+        margin: 5px;
+        background: #7f5af0;
+        color: white;
+        text-decoration: none;
+        border-radius: 5px;
+        border: none;
+        cursor: pointer;
+    }
+
+    .btn:hover {
+        opacity: 0.9;
+    }
+
+    .btn-secondary {
+        background: #6c757d;
+    }
+
+    .spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: white;
+        animation: spin 1s ease-in-out infinite;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .loading-text {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        justify-content: center;
+    }
+</style>
+
+<div class="progress-container">
+    <h2>Database Import Progress</h2>
+
+    <div class="status-badge" id="statusBadge"><span class="spinner"></span> Initializing...</div>
+
+    <div class="progress-section">
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+            <span class="progress-text" id="progressText" id="progress">0%</span>
+        </div>
+    </div>
+
+    <div id="currentTask" class="current-task" style="display: none"></div>
+
+    <div class="stats-grid" id="statsGrid" style="display: none">
+        <div class="stat-card">
+            <div class="stat-label">Tables</div>
+            <div class="stat-value" id="totalTables">-</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Total Keys</div>
+            <div class="stat-value" id="totalKeys">-</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Processed Keys</div>
+            <div class="stat-value" id="processedKeys">-</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Imported Keys</div>
+            <div class="stat-value" id="importedKeys" style="color: #28a745">-</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Skipped Keys</div>
+            <div class="stat-value" id="skippedKeys" style="color: #ffc107">-</div>
+        </div>
+    </div>
+
+    <div id="errorBox" class="error-box" style="display: none"></div>
+
+    <div class="actions">
+        <a href="/upload/database" class="btn btn-secondary" id="backBtn">Back</a>
+        <a href="/search" class="btn" id="searchBtn" style="display: none">Search Keys</a>
+    </div>
+</div>
+
+<script>
+    const taskId = "{{ task_id }}";
+    let pollInterval;
+
+    function updateProgress(data) {
+        const statusBadge = document.getElementById("statusBadge");
+        const progressBar = document.getElementById("progressBar");
+        const progressText = document.getElementById("progressText");
+        const currentTask = document.getElementById("currentTask");
+        const statsGrid = document.getElementById("statsGrid");
+        const errorBox = document.getElementById("errorBox");
+
+        // Update status badge
+        const statusClass = `status-${data.status}`;
+        statusBadge.className = `status-badge ${statusClass}`;
+
+        if (data.status === "pending") {
+            statusBadge.innerHTML = '<span class="spinner"></span> Waiting in queue...';
+        } else if (data.status === "running") {
+            statusBadge.innerHTML = '<span class="spinner"></span> Importing...';
+        } else if (data.status === "completed") {
+            statusBadge.textContent = "✓ Completed";
+        } else if (data.status === "failed") {
+            statusBadge.textContent = "✗ Failed";
+        }
+
+        // Update progress bar
+        const percent = data.progress_percent || 0;
+        progressBar.style.width = `${percent}%`;
+        progressText.textContent = `${percent}%`;
+
+        if (data.status === "completed") {
+            progressBar.classList.add("completed");
+        } else if (data.status === "failed") {
+            progressBar.classList.add("failed");
+        }
+
+        // Update current task
+        if (data.current_table && data.status === "running") {
+            currentTask.style.display = "block";
+            currentTask.textContent = `Processing table: ${data.current_table}`;
+        } else {
+            currentTask.style.display = "none";
+        }
+
+        // Update stats
+        if (data.total_keys > 0) {
+            statsGrid.style.display = "grid";
+            document.getElementById("totalTables").textContent = data.total_tables || 0;
+            document.getElementById("processedKeys").textContent = data.processed_keys.toLocaleString();
+            document.getElementById("importedKeys").textContent = data.imported_keys.toLocaleString();
+            document.getElementById("skippedKeys").textContent = data.skipped_keys.toLocaleString();
+            document.getElementById("totalKeys").textContent = data.total_keys.toLocaleString();
+        }
+
+        // Show error if failed
+        if (data.status === "failed" && data.error_message) {
+            errorBox.style.display = "block";
+            errorBox.textContent = `Error: ${data.error_message}`;
+        }
+
+        // Show search button if completed
+        if (data.status === "completed") {
+            document.getElementById("searchBtn").style.display = "inline-block";
+        }
+
+        // Stop polling if task is done
+        if (data.status === "completed" || data.status === "failed") {
+            clearInterval(pollInterval);
+        }
+    }
+
+    function pollProgress() {
+        fetch(`/api/import/status/${taskId}`)
+            .then((response) => response.json())
+            .then((data) => {
+                if (data.error) {
+                    console.error("Error fetching progress:", data.error);
+                    clearInterval(pollInterval);
+                    document.getElementById("errorBox").style.display = "block";
+                    document.getElementById("errorBox").textContent = `Error: ${data.error}`;
+                } else {
+                    updateProgress(data);
+                }
+            })
+            .catch((error) => {
+                console.error("Error polling progress:", error);
+            });
+    }
+
+    // Start polling
+    pollProgress();
+    pollInterval = setInterval(pollProgress, 5000);
+</script>
+{% endblock %}

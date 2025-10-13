@@ -82,14 +82,18 @@
                 return;
             }
 
-            if (file.size > 50 * 1024 * 1024) {
-                e.preventDefault();
-                alert("File size must be less than 50MB");
-                return;
-            }
+            // if (file.size > 50 * 1024 * 1024) {
+            //     e.preventDefault();
+            //     alert("File size must be less than 50MB");
+            //     return;
+            // }
 
             submitBtn.disabled = true;
-            btnText.textContent = previewMode ? "Validating..." : "Importing...";
+            if (previewMode) {
+                btnText.textContent = "Validating...";
+            } else {
+                btnText.textContent = "Uploading...";
+            }
         }
     });
 
