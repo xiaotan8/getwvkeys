@@ -1161,7 +1161,11 @@ def admin_delete_system_device(device_type, device_id):
 @app.route("/upload/database", methods=["GET", "POST"])
 def upload_database():
     if request.method == "GET":
-        return render_template("upload_db.html")
+        return render_template(
+            "upload_db.html",
+            current_user=current_user,
+            website_version=website_version,
+        )
 
     if "database" not in request.files:
         return (
@@ -1239,7 +1243,12 @@ def upload_database():
     except Exception as e:
         if "temp_path" in locals() and os.path.exists(temp_path):
             os.remove(temp_path)
-        return render_template("upload_db_result.html", error=str(e)), 500
+        return (
+            render_template(
+                "upload_db_result.html", current_user=current_user, website_version=website_version, error=str(e)
+            ),
+            500,
+        )
 
 
 @app.route("/upload/database/progress/<task_id>")
