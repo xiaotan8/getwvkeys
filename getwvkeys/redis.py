@@ -93,8 +93,8 @@ class Redis:
                         self.publish_error(reply_to, "Error enabling user {}: {}".format(user_id, e))
             elif op == OPCode.KEY_COUNT.value:
                 with self.app.app_context():
-                    if library.should_refresh_cache(max_age_seconds=3600):
-                        library.update_cached_keycount()
+                    if self.library.should_refresh_cache(max_age_seconds=3600):
+                        self.library.update_cached_keycount()
             
                     self.publish_response(reply_to, self.library.get_cached_keycount())
             elif op == OPCode.USER_COUNT.value:
