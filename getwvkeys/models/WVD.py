@@ -15,27 +15,35 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
-from sqlalchemy import Column, Integer, String
+from pywidevine import Device
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from getwvkeys.models.Base import Base
-from getwvkeys.models.UserPRD import user_prd_association
 from getwvkeys.models.UserWVD import user_wvd_association
 
 
-class User(Base):
-    __tablename__ = "users"
-    id = Column(
+class WVD(Base):
+    __tablename__ = "wvds"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    hash = Column(String(255, collation="utf8mb4_general_ci"), unique=True, nullable=False)
+    wvd = Column(Text, nullable=False)
+    uploaded_by = Column(
         String(255, collation="utf8mb4_general_ci"),
-        primary_key=True,
+        ForeignKey("users.id"),
         nullable=False,
-        unique=True,
     )
-    username = Column(String(255, collation="utf8mb4_general_ci"), nullable=False)
-    discriminator = Column(String(255, collation="utf8mb4_general_ci"), nullable=False)
-    avatar = Column(String(255, collation="utf8mb4_general_ci"), nullable=True)
-    public_flags = Column(Integer, nullable=False)
-    api_key = Column(String(255, collation="utf8mb4_general_ci"), nullable=False)
-    flags = Column(Integer, default=0, nullable=False)
-    prds = relationship("PRD", secondary=user_prd_association, back_populates="users")
-    wvds = relationship("WVD", secondary=user_wvd_association, back_populates="users")
+    enabled_for_rotation = Column(Boolean, default=False, nullable=False)
+    users = relationship("User", secondary=user_wvd_association, back_populates="wvds")
+
+    def to_json(self):
+        return {
+            "id": self.id,
+            "wvd": self.wvd,
+            "uploaded_by": self.uploaded_by,
+            "hash": self.hash,
+            "enabled_for_rotation": self.enabled_for_rotation,
+        }
+
+    def to_device(self):
+        return Device.loads(self.wvd)

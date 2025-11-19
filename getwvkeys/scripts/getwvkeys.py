@@ -1,18 +1,18 @@
 """
- This file is part of the GetWVKeys project (https://github.com/GetWVKeys/getwvkeys)
- Copyright (C) 2022-2024 Notaghost, Puyodead1 and GetWVKeys contributors 
- 
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU Affero General Public License as published
- by the Free Software Foundation, version 3 of the License.
+This file is part of the GetWVKeys project (https://github.com/GetWVKeys/getwvkeys)
+Copyright (C) 2022-2024 Notaghost, Puyodead1 and GetWVKeys contributors
 
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU Affero General Public License for more details.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3 of the License.
 
- You should have received a copy of the GNU Affero General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import argparse
@@ -22,10 +22,19 @@ import sys
 
 import requests
 
+"""
+Script Version: 5.3
+- Renamed buildinfo to device_hash
+
+Script Version: 5.4
+ - Added device_hash and security level support
+ - Changed output format of keys
+"""
+
 # Version of the API the script is for. This should be changed when the API is updated.
-API_VERSION = "5"
+API_VERSION = "5.1"
 # Version of the individual script
-SCRIPT_VERSION = "5.2"
+SCRIPT_VERSION = "5.4"
 # Dynamic injection of the API url
 API_URL = "__getwvkeys_api_url__"
 
@@ -54,7 +63,7 @@ class GetWVKeys:
         auth: str,
         verbose: bool = False,
         force: bool = False,
-        buildinfo: str = "",
+        device_hash: str = "",
         _headers: dict[str, str] = headers,
         **kwargs,
     ) -> None:
@@ -64,16 +73,21 @@ class GetWVKeys:
         self.auth = auth
         self.verbose = verbose
         self.force = force
-        self.buildinfo = buildinfo
+        self.device_hash = device_hash
 
         self.baseurl = "https://getwvkeys.cc" if API_URL == "__getwvkeys_api_url__" else API_URL
-        self.api_url = self.baseurl + "/api"
+        self.api_url = "{}/api".format(self.baseurl)
         self.headers = _headers
 
     def generate_request(self):
         if self.verbose:
             print("[+] Generating License Request ")
-        data = {"pssh": self.pssh, "buildInfo": self.buildinfo, "force": self.force, "license_url": self.url}
+        data = {
+            "pssh": self.pssh,
+            "device_hash": self.device_hash,
+            "force": self.force,
+            "license_url": self.url,
+        }
         header = {"X-API-Key": self.auth, "Content-Type": "application/json"}
         r = requests.post(self.api_url, json=data, headers=header)
         if not r.ok:
@@ -93,10 +107,14 @@ class GetWVKeys:
 
         self.session_id = data["session_id"]
         challenge = data["challenge"]
+        device_hash = data["device"]
+        security_level = data["security_level"]
 
         if self.verbose:
             print("[+] License Request Generated\n", challenge)
             print("[+] Session ID:", self.session_id)
+            print("[+] Device Hash:", device_hash)
+            print("[+] Security Level:", security_level)
 
         return {"cache": False, "challenge": base64.b64decode(challenge)}
 
@@ -108,7 +126,7 @@ class GetWVKeys:
             "response": license_response,
             "license_url": self.url,
             "headers": self.headers,
-            "buildInfo": self.buildinfo,
+            "device_hash": self.device_hash,
             "force": self.force,
             "session_id": self.session_id,
         }
@@ -128,8 +146,8 @@ class GetWVKeys:
         license_request = self.generate_request()
         if license_request["cache"] == True:
             if __name__ == "__main__":
-                print("\n" * 5)
-                print("[+] Keys:")
+                # print("\n" * 5)
+                print("[+] Keys (Cache):")
                 keys = license_request["keys"]
                 for k in keys:
                     print("--key {}".format(k["key"]))
@@ -142,16 +160,19 @@ class GetWVKeys:
         decrypt_response = self.decrypter(base64.b64encode(license_response).decode())
         keys = decrypt_response["keys"]
         session_id = decrypt_response["session_id"]
+        device_hash = decrypt_response["device"]
+        security_level = decrypt_response["security_level"]
 
         if self.verbose:
-            print(json.dumps(decrypt_response, indent=4))
             print("Decryption Session ID:", session_id)
+            print("Device Hash:", device_hash)
+            print("Security Level:", security_level)
 
         if __name__ == "__main__":
-            print("\n" * 5)
+            # print("\n" * 5)
             print("[+] Keys:")
             for k in keys:
-                print("--key {}".format(k))
+                print("--key {}".format(k["key"]))
             return
         else:
             return decrypt_response
@@ -187,7 +208,7 @@ if __name__ == "__main__":
         default=False,
         action="store_true",
     )
-    parser.add_argument("--buildinfo", "-b", default="", help="Buildinfo", required=False)
+    parser.add_argument("--device", "-d", dest="device_hash", default="", help="Device Hash", required=False)
     parser.add_argument("--version", "-V", help="Print version and exit", action="store_true")
 
     args = parser.parse_args()
@@ -211,7 +232,7 @@ if __name__ == "__main__":
     if len(sys.argv) == 1:
         parser.print_help()
         print()
-        args.buildinfo = ""
+        args.device_hash = ""
         args.verbose = False
 
     try:

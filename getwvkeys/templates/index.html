@@ -15,10 +15,14 @@
   along with this program.  If not, see <https://www.gnu.org/licenses/>.
  -->
 
-{% extends "base.html" %} {% block title %}Home{% endblock %} {% block content %}
+{% extends "base.html" %} {% block title %}Get Widevine Keys{% endblock %} {% block content %}
 <section class="wdvn-request">
     <header>
-        <h1 class="section-title">Send DRM Request</h1>
+        <h1 class="section-title">Get Widevine Keys</h1>
+        <div class="keycount-wrapper">
+            <span>Total key count: </span>
+            <span id="keycount">Loading... </span>
+        </div>
     </header>
     <div class="form-container">
         <form>
@@ -30,7 +34,7 @@
                         type="text"
                         id="pssh"
                         name="pssh"
-                        value="AAADfHBzc2gAAAAAmgTweZhAQoarkuZb4IhflQAAA1xcAwAAAQABAFIDPABXAFIATQBIAEUAQQBEAEUAUgAgAHgAbQBsAG4AcwA9ACIAaAB0AHQAcAA6AC8ALwBzAGMAaABlAG0AYQBzAC4AbQBpAGMAcgBvAHMAbwBmAHQALgBjAG8AbQAvAEQAUgBNAC8AMgAwADAANwAvADAAMwAvAFAAbABhAHkAUgBlAGEAZAB5AEgAZQBhAGQAZQByACIAIAB2AGUAcgBzAGkAbwBuAD0AIgA0AC4AMAAuADAALgAwACIAPgA8AEQAQQBUAEEAPgA8AFAAUgBPAFQARQBDAFQASQBOAEYATwA+ADwASwBFAFkATABFAE4APgAxADYAPAAvAEsARQBZAEwARQBOAD4APABBAEwARwBJAEQAPgBBAEUAUwBDAFQAUgA8AC8AQQBMAEcASQBEAD4APAAvAFAAUgBPAFQARQBDAFQASQBOAEYATwA+ADwASwBJAEQAPgA0AFIAcABsAGIAKwBUAGIATgBFAFMAOAB0AEcAawBOAEYAVwBUAEUASABBAD0APQA8AC8ASwBJAEQAPgA8AEMASABFAEMASwBTAFUATQA+AEsATABqADMAUQB6AFEAUAAvAE4AQQA9ADwALwBDAEgARQBDAEsAUwBVAE0APgA8AEwAQQBfAFUAUgBMAD4AaAB0AHQAcABzADoALwAvAHAAcgBvAGYAZgBpAGMAaQBhAGwAcwBpAHQAZQAuAGsAZQB5AGQAZQBsAGkAdgBlAHIAeQAuAG0AZQBkAGkAYQBzAGUAcgB2AGkAYwBlAHMALgB3AGkAbgBkAG8AdwBzAC4AbgBlAHQALwBQAGwAYQB5AFIAZQBhAGQAeQAvADwALwBMAEEAXwBVAFIATAA+ADwAQwBVAFMAVABPAE0AQQBUAFQAUgBJAEIAVQBUAEUAUwA+ADwASQBJAFMAXwBEAFIATQBfAFYARQBSAFMASQBPAE4APgA4AC4AMQAuADIAMwAwADQALgAzADEAPAAvAEkASQBTAF8ARABSAE0AXwBWAEUAUgBTAEkATwBOAD4APAAvAEMAVQBTAFQATwBNAEEAVABUAFIASQBCAFUAVABFAFMAPgA8AC8ARABBAFQAQQA+ADwALwBXAFIATQBIAEUAQQBEAEUAUgA+AA=="
+                        value="AAAAp3Bzc2gAAAAA7e+LqXnWSs6jyCfc1R0h7QAAAIcSEFF0U4YtQlb9i61PWEIgBNcSEPCTfpp3yFXwptQ4ZMXZ82USEE1LDKJawVjwucGYPFF+4rUSEJAqBRprNlaurBkm/A9dkjISECZHD0KW1F0Eqbq7RC4WmAAaDXdpZGV2aW5lX3Rlc3QiFnNoYWthX2NlYzViZmY1ZGM0MGRkYzlI49yVmwY="
                     />
                 </div>
             </div>
@@ -42,7 +46,7 @@
                         type="text"
                         id="license"
                         name="licenseUrl"
-                        value="https://test.playready.microsoft.com/service/rightsmanager.asmx?cfg=(persist:false,sl:2000)"
+                        value="https://cwip-shaka-proxy.appspot.com/no_auth"
                     />
                 </div>
             </div>
@@ -50,16 +54,16 @@
                 <span>Headers:</span>
                 <div class="form-item-items">
                     <textarea data-lpignore="true" rows="4" cols="64" id="headers" name="headers">
-Content-Type: text/xml; charset=UTF-8</textarea
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0</textarea
                     >
                     <label for="headers">Headers that are sent to the license server.</label>
                 </div>
             </div>
             <div class="form-item">
-                <span>Build Info:</span>
+                <span>Device:</span>
                 <div class="form-item-items">
-                    <input data-lpignore="true" type="text" id="buildInfo" name="buildInfo" value="" />
-                    <label for="buildInfo">Build Info to use. Leave blank unless you know what you're doing.</label>
+                    <input data-lpignore="true" type="text" id="device_hash" name="device_hash" value="" />
+                    <label for="device_hash">Device Hash to use. Leave blank unless you know what you're doing.</label>
                 </div>
             </div>
             <div class="form-item">
@@ -73,27 +77,57 @@ Content-Type: text/xml; charset=UTF-8</textarea
                 <span>Force:</span>
                 <div class="form-item-items">
                     <input type="checkbox" id="force" name="force" />
-                    <label for="force">Force the request</label>
+                    <label for="force">Bypass cache</label>
                 </div>
             </div>
             <div class="form-item downgrade-item">
                 <span>Downgrade:</span>
                 <div class="form-item-items">
                     <input type="checkbox" id="downgrade" name="downgrade" />
-                    <label for="downgrade">Playready Only</label>
+                    <label for="downgrade">PlayReady Only</label>
                 </div>
             </div>
-            <input type="submit" value="Send" />
+            <div class="form-interactives">
+                <input type="submit" value="Send" />
+                <!-- toggle switch, switch between widevine nad playready -->
+                <div>
+                    <span>Widevine</span>
+                    <label class="switch">
+                        <input type="checkbox" id="drm-switch" />
+                        <span class="slider round"></span>
+                    </label>
+                    <span>PlayReady</span>
+                </div>
+            </div>
         </form>
     </div>
     <div class="info-container">
-        <div class="keycount-wrapper">
-            <span>Total key count: </span>
-            <span id="keycount">Loading... </span>
-        </div>
-        <div class="result-container" id="demo">
+        <div class="result-container" id="status">
             <pre>Send a request to see the result.</pre>
         </div>
+    </div>
+    <div class="donation-container">
+        <table>
+            <tbody>
+                <tr>
+                    <th>Coin</th>
+                    <th>Address</th>
+                    <th>Network</th>
+                </tr>
+
+                <tr>
+                    <td>BTC</td>
+                    <td>bc1qa9eqddsn8zdhcfu48s705mlf8elh8avr4w03md</td>
+                    <td>Bitcoin</td>
+                </tr>
+
+                <tr>
+                    <td>ETH</td>
+                    <td>0xCdfAADad4987A1EeC23D9203c8404890B380daa4</td>
+                    <td>Ethereum</td>
+                </tr>
+            </tbody>
+        </table>
     </div>
 </section>
 {% endblock %}

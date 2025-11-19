@@ -4,10 +4,6 @@ secret_key = ""
 database_uri = "sqlite:///db.sqlite3"
 redis_uri = "redis://localhost:6379/0"
 max_sessions = 60
-# List of CDMs that are used in CDM rotation
-default_cdms = ["cdm_identifier"]
-# List of CDMs that should use the blacklist, these are considered to be GetWVKeys System CDMs.
-system_cdms = ["cdm_identifier"]
 guild_id = ""
 verified_role_id = ""
 login_disabled = false

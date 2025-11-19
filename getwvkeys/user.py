@@ -1,3 +1,20 @@
+"""
+This file is part of the GetWVKeys project (https://github.com/GetWVKeys/getwvkeys)
+Copyright (C) 2022-2024 Notaghost, Puyodead1 and GetWVKeys contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3 of the License.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+"""
+
 import base64
 import logging
 import secrets
@@ -11,9 +28,10 @@ from werkzeug.exceptions import BadRequest, Forbidden, NotFound
 
 from getwvkeys import config
 from getwvkeys.models.APIKey import APIKey as APIKey
-from getwvkeys.models.CDM import CDM
+from getwvkeys.models.Key import Key
 from getwvkeys.models.PRD import PRD
 from getwvkeys.models.User import User
+from getwvkeys.models.WVD import WVD
 from getwvkeys.utils import Bitfield, FlagAction, UserFlags
 
 logger = logging.getLogger("getwvkeys")
@@ -32,18 +50,21 @@ class FlaskUser(UserMixin):
         self.flags = Bitfield(user.flags)
         self.user_model = user
 
-    def get_user_cdms(self):
-        cdms = CDM.query.filter_by(uploaded_by=self.id).all()
-        return [
-            {"id": x.id, "code": x.code, "session_id_type": x.session_id_type, "security_level": x.security_level}
-            for x in cdms
-        ]
+    def get_user_wvds(self):
+        return [{"id": x.id, "hash": x.hash} for x in self.user_model.wvds]
 
     def get_user_prds(self):
         return [{"id": x.id, "hash": x.hash} for x in self.user_model.prds]
 
     def patch(self, data):
-        disallowed_keys = ["id", "username", "discriminator", "avatar", "public_flags", "api_key"]
+        disallowed_keys = [
+            "id",
+            "username",
+            "discriminator",
+            "avatar",
+            "public_flags",
+            "api_key",
+        ]
 
         for key, value in data.items():
             # Skip attributes that cant be changed
@@ -95,15 +116,35 @@ class FlaskUser(UserMixin):
 
         self.db.session.commit()
 
-    def delete_cdm(self, id):
-        cdm = CDM.query.filter_by(id=id).first()
-        if cdm is None:
-            raise NotFound("CDM not found")
-        # check if uploaded_by is null, or if its not the users cdm
-        if not cdm.uploaded_by or (cdm.uploaded_by and cdm.uploaded_by != self.id):
-            raise Forbidden("Missing Access")
-        self.db.session.delete(cdm)
-        self.db.session.commit()
+    def delete_wvd(self, id):
+        session = self.db.session
+
+        wvd = WVD.query.filter_by(id=id).first()
+        if wvd is None:
+            raise NotFound("WVD not found")
+
+        # Check if the device is associated with the user
+        if wvd and self.user_model.wvds:
+            association_query = text("DELETE FROM user_wvd WHERE user_id = :user_id AND device_hash = :device_hash")
+            session.execute(
+                association_query,
+                {"user_id": self.user_model.id, "device_hash": wvd.hash},
+            )
+            session.commit()
+
+            # Check if the device is still associated with any other users
+            count_query = text("SELECT COUNT(*) FROM user_wvd WHERE device_hash = :device_hash")
+            device_users_count = session.execute(count_query, {"device_hash": wvd.hash}).scalar()
+
+            if device_users_count == 0:
+                # If no other users are associated, delete the wvd
+                session.delete(wvd)
+                session.commit()
+                return "WVD deleted"
+            else:
+                return "WVD unlinked"
+        else:
+            raise NotFound("You do not have this WVD associated with your profile")
 
     def delete_prd(self, id):
         session = self.db.session
@@ -115,7 +156,10 @@ class FlaskUser(UserMixin):
         # Check if the device is associated with the user
         if prd and self.user_model.prds:
             association_query = text("DELETE FROM user_prd WHERE user_id = :user_id AND device_hash = :device_hash")
-            session.execute(association_query, {"user_id": self.user_model.id, "device_hash": prd.hash})
+            session.execute(
+                association_query,
+                {"user_id": self.user_model.id, "device_hash": prd.hash},
+            )
             session.commit()
 
             # Check if the device is still associated with any other users
@@ -210,9 +254,22 @@ class FlaskUser(UserMixin):
     def is_blacklist_exempt(self):
         return self.flags.has(UserFlags.BLACKLIST_EXEMPT)
 
+    def is_system_user(self):
+        return self.flags.has(UserFlags.SYSTEM)
+
+    def is_admin(self):
+        return self.flags.has(UserFlags.ADMIN)
+
     def check_status(self, ignore_suspended=False):
+        if self.is_system_user():
+            raise Forbidden("System users cannot login or access the API.")
+
         if self.flags.has(UserFlags.SUSPENDED) == 1 and not ignore_suspended:
             raise Forbidden("Your account has been suspended.")
+
+    def get_key_count(self):
+        # query keys with added_by = self.id
+        return Key.query.filter_by(added_by=self.id).count()
 
     @staticmethod
     def is_api_key_valid(db: SQLAlchemy, api_key: str):
@@ -264,3 +321,38 @@ class FlaskUser(UserMixin):
     @staticmethod
     def get_user_count():
         return User.query.count()
+
+    @staticmethod
+    def create_system_user(db: SQLAlchemy):
+        """Create or get the system user for owning system devices"""
+        system_user_id = "SYSTEM"
+
+        # Check if system user already exists
+        existing_user = User.query.filter_by(id=system_user_id).first()
+        if existing_user:
+            return FlaskUser(db, existing_user)
+
+        # Create system user
+        system_user = User(
+            id=system_user_id,
+            username="System",
+            discriminator="0000",
+            avatar=None,
+            public_flags=0,
+            api_key=secrets.token_hex(32),  # Generate API key but it won't be usable
+            flags=UserFlags.SYSTEM.value,  # Set system flag
+        )
+
+        db.session.add(system_user)
+        db.session.commit()
+
+        logger.info("Created system user")
+        return FlaskUser(db, system_user)
+
+    @staticmethod
+    def get_system_user(db: SQLAlchemy):
+        """Get the system user, create if it doesn't exist"""
+        system_user = User.query.filter_by(id="SYSTEM").first()
+        if not system_user:
+            return FlaskUser.create_system_user(db)
+        return FlaskUser(db, system_user)

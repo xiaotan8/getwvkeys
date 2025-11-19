@@ -1,36 +1,42 @@
 """
- This file is part of the GetWVKeys project (https://github.com/GetWVKeys/getwvkeys)
- Copyright (C) 2022-2024 Notaghost, Puyodead1 and GetWVKeys contributors 
- 
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU Affero General Public License as published
- by the Free Software Foundation, version 3 of the License.
+This file is part of the GetWVKeys project (https://github.com/GetWVKeys/getwvkeys)
+Copyright (C) 2022-2024 Notaghost, Puyodead1 and GetWVKeys contributors
 
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU Affero General Public License for more details.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3 of the License.
 
- You should have received a copy of the GNU Affero General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
+import atexit
 import base64
 import json
+import mimetypes
 import os
 import pathlib
+import tempfile
+import threading
 import time
+from datetime import datetime, timezone
 from functools import update_wrapper, wraps
 from io import BytesIO
 from pathlib import Path
 from sqlite3 import DatabaseError
 
 import requests
-import validators as validationlib
-from dunamai import Style, Version
+from dunamai import Version
 from flask import (
     Flask,
     Request,
+    current_app,
+    g,
     jsonify,
     make_response,
     redirect,
@@ -39,6 +45,7 @@ from flask import (
     send_file,
     send_from_directory,
     session,
+    url_for,
 )
 from flask_caching import Cache
 from flask_login import LoginManager, current_user, login_user, logout_user
@@ -55,22 +62,39 @@ from werkzeug.exceptions import (
     UnsupportedMediaType,
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.utils import secure_filename
 
 from alembic import command
 from alembic.config import Config
 from getwvkeys import config, libraries
 
 # these need to be kept
+from getwvkeys.import_worker import ImportWorker
+from getwvkeys.models.ImportTask import ImportTask
+from getwvkeys.models.PRD import PRD
 from getwvkeys.models.Shared import db
+from getwvkeys.models.TrafficLog import TrafficLog
+from getwvkeys.models.User import User
+from getwvkeys.models.WVD import WVD
 from getwvkeys.redis import Redis
+from getwvkeys.services.PlayReady import PlayReady
+from getwvkeys.services.Widevine import Widevine
 from getwvkeys.user import FlaskUser
-from getwvkeys.utils import Blacklist, UserFlags, Validators, construct_logger
+from getwvkeys.utils import (
+    Blacklist,
+    DRMType,
+    UserFlags,
+    Validators,
+    construct_logger,
+    prd_to_dict,
+    wvd_to_dict,
+)
 
 app = Flask(__name__.split(".")[0], root_path=str(Path(__file__).parent))
 app.config["SQLALCHEMY_DATABASE_URI"] = config.SQLALCHEMY_DATABASE_URI
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.secret_key = config.SECRET_KEY
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 db.init_app(app)
 
 # Logger setup
@@ -82,13 +106,41 @@ login_manager.init_app(app)
 client = WebApplicationClient(config.OAUTH2_CLIENT_ID)
 
 # get current git commit sha
-sha = Version.from_git().serialize(style=None, dirty=True, format="{base}-post.{distance}+{commit}.{dirty}.{branch}")
+website_version = Version.from_git().serialize(
+    style=None, dirty=True, format="{base}-post.{distance}+{commit}.{dirty}.{branch}"
+)
 
 # create library instance
 library = libraries.Library(db)
 
+app.import_worker = ImportWorker(library, app)
+app.import_worker.start()
+atexit.register(lambda: app.import_worker.stop())
+
+
 # create validators instance
 validators = Validators()
+
+CACHE_TIME = 30 * 60  # seconds
+
+
+# Background task for updating key count cache
+def update_key_count_cache_periodically():
+    while True:
+        try:
+            time.sleep(CACHE_TIME)
+            with app.app_context():
+                if library.should_refresh_cache(max_age_seconds=CACHE_TIME):
+                    library.update_cached_keycount()
+                    logger.info("Background task: Key count cache updated")
+        except Exception as e:
+            logger.error(f"Background task error: {e}")
+
+
+# Start background task in a daemon thread
+cache_update_thread = threading.Thread(target=update_key_count_cache_periodically, daemon=True)
+cache_update_thread.start()
+logger.info("Started background key count cache update task")
 
 # initialize redis instance
 if not config.IS_STAGING and config.REDIS_URI is not None:
@@ -106,6 +158,27 @@ cache = Cache(app)
 # initialize blacklist class
 blacklist = Blacklist()
 
+# Initialize key count cache on startup
+with app.app_context():
+    try:
+        # Check if cache exists, if not initialize it
+        if not library.get_cached_keycount():
+            logger.info("Initializing key count cache on startup...")
+            library.update_cached_keycount()
+            logger.info(f"Key count cache initialized with {library.get_cached_keycount()} keys")
+
+        # Initialize system user on startup
+        from getwvkeys.user import FlaskUser
+
+        system_user = FlaskUser.get_system_user(db)
+        logger.info(f"System user initialized: {system_user.username} (ID: {system_user.id})")
+
+        # Build rotation device configuration cache from system user devices
+        wvds, prds = library.build_rotation_config_cache()
+        logger.info(f"Rotation config initialized: {len(wvds)} WVDs, {len(prds)} PRDs")
+    except Exception as e:
+        logger.error(f"Failed to initialize on startup: {e}")
+
 
 # Utilities
 def authentication_required(exempt_methods=[], flags_required: int = None, ignore_suspended: bool = False):
@@ -120,12 +193,7 @@ def authentication_required(exempt_methods=[], flags_required: int = None, ignor
             # handle api keys
             if not current_user.is_authenticated:
                 # check if they passed in an api key
-                api_key = (
-                    request.headers.get("X-API-Key")
-                    or request.form.get("X-API-Key")
-                    or request.headers.get("Authorization")
-                    or request.form.get("Authorization")
-                )
+                api_key = request.headers.get("X-API-Key") or request.headers.get("Authorization")
                 if not api_key:
                     raise Unauthorized("API Key Required")
 
@@ -155,6 +223,119 @@ def authentication_required(exempt_methods=[], flags_required: int = None, ignor
     return decorator
 
 
+# require and validate cdm id for remote cdm operations
+def remotecdm_validate_cdmid():
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(cdm_id, *args, **kwargs):
+            cdm_id = cdm_id.lower()
+            if cdm_id not in ["widevine", "playready"]:
+                return (
+                    jsonify(
+                        {
+                            "status": 400,
+                            "message": "Invalid CDM ID.",
+                        }
+                    ),
+                    400,
+                )
+            return func(cdm_id, *args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
+# require and validate api key for remote cdm operations
+def remotecdm_authentication_required(exempt_methods=[]):
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(*args, **kwargs):
+            if request.method in exempt_methods:
+                return func(*args, **kwargs)
+
+            # handle api keys
+            if not current_user.is_authenticated:
+                # check if they passed in an api key
+                api_key = request.headers.get("X-Secret-Key")
+                if not api_key:
+                    raise Unauthorized("API Key Required")
+
+                # check if the key is a valid user key
+                user = FlaskUser.get_user_by_api_key(db, api_key)
+
+                if not user:
+                    raise Forbidden("Invalid API Key")
+
+                login_user(user, remember=False)
+
+            # check if the user is enabled
+            current_user.check_status()
+
+            return func(*args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
+# optional auth, if api key specified, get the user
+def optional_auth():
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(*args, **kwargs):
+            api_key = request.headers.get("X-API-Key")
+            if api_key:
+                user = FlaskUser.get_user_by_api_key(db, api_key)
+                if user:
+                    login_user(user, remember=False)
+            return func(*args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
+# only allow specified cdm ids to use an operation
+def remotecdm_require_cdmids(cdm_ids=[]):
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(cdm_id, *args, **kwargs):
+            if cdm_id not in cdm_ids:
+                return (
+                    jsonify(
+                        {
+                            "status": 400,
+                            "message": f"Unsupported operation for specified CDM id",
+                        }
+                    ),
+                    400,
+                )
+            return func(cdm_id, *args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
+# decorator that takes a list of required body keys and validates they exist
+def ensure_body_keys(required_keys=[]):
+    def decorator(func):
+        @wraps(func)
+        def wrapped_function(*args, **kwargs):
+            event_data = request.get_json()
+            if not event_data:
+                raise BadRequest("Missing Body")
+            for key in required_keys:
+                if key not in event_data:
+                    raise BadRequest(f"Missing Field: {key}")
+            return func(*args, **kwargs)
+
+        return update_wrapper(wrapped_function, func)
+
+    return decorator
+
+
 def on_json_loading_failed(self, e):
     raise UnsupportedMediaType()
 
@@ -163,9 +344,9 @@ Request.on_json_loading_failed = on_json_loading_failed
 
 
 def blacklist_check(device, license_url):
-    # check if the license url is blacklisted, but only run this check on GetWVKeys owned CDMs
+    # check if the license url is blacklisted, but only run this check on GetWVKeys owned device
     if (
-        (device in config.SYSTEM_CDMS or device in config.SYSTEM_PRDS)
+        (device in config.SYSTEM_WVDS or device in config.SYSTEM_PRDS)
         and blacklist.is_url_blacklisted(license_url)
         and not current_user.is_blacklist_exempt()
     ):
@@ -174,11 +355,29 @@ def blacklist_check(device, license_url):
 
 def log_date_time_string():
     """Return the current time formatted for logging."""
-    monthname = [None, "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    monthname = [
+        None,
+        "Jan",
+        "Feb",
+        "Mar",
+        "Apr",
+        "May",
+        "Jun",
+        "Jul",
+        "Aug",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dec",
+    ]
     now = time.time()
     year, month, day, hh, mm, ss, x, y, z = time.localtime(now)
     s = "%02d/%3s/%04d %02d:%02d:%02d" % (day, monthname[month], year, hh, mm, ss)
     return s
+
+
+def get_real_ip():
+    return request.headers.get("CF-Connecting-IP") or request.headers.get("X-Real-IP") or request.remote_addr
 
 
 @login_manager.user_loader
@@ -186,10 +385,35 @@ def load_user(user_id):
     return FlaskUser.get(db, user_id)
 
 
+@app.before_request
+def start_timer():
+    g.start_time = time.time()
+
+
 @app.after_request
 def log_request_info(response):
+    real_ip = get_real_ip()
+    try:
+        duration = int((time.time() - g.start_time) * 1000)
+    except Exception:
+        duration = None
+
+    if not request.path.startswith("/static") and not request.path in ["/favicon.ico"]:
+        log_entry = TrafficLog(
+            user_id=current_user.id if current_user.is_authenticated else None,
+            path=request.path,
+            timestamp=datetime.now(timezone.utc),
+            ip=real_ip,
+            user_agent=request.headers.get("User-Agent"),
+            status_code=response.status_code,
+            duration_ms=duration,
+        )
+
+        db.session.add(log_entry)
+        db.session.commit()
+
     user_id = current_user.id if current_user.is_authenticated else "N/A"
-    l = f'{request.remote_addr} - - [{log_date_time_string()}] "{request.method} {request.path}" {response.status_code} - {user_id}'
+    l = f'{real_ip} - - [{log_date_time_string()}] "{request.method} {request.path}" {response.status_code} - {user_id}'
 
     if request.data and len(request.data) > 0 and request.headers.get("Content-Type") == "application/json":
         l += f"\nRequest Data: {request.data.decode()}"
@@ -204,21 +428,36 @@ def log_request_info(response):
 
 @app.route("/")
 @authentication_required()
-def wv_home():
-    return render_template("index.html", page_title="GetWVkeys", current_user=current_user, website_version=sha)
+def index():
+    return render_template(
+        "index.html",
+        page_title="GetWVKeys",
+        current_user=current_user,
+        website_version=website_version,
+    )
 
 
 @app.route("/faq")
 @authentication_required()
 def faq():
-    return render_template("faq.html", page_title="FAQ", current_user=current_user, website_version=sha)
+    return render_template(
+        "faq.html",
+        page_title="FAQ",
+        current_user=current_user,
+        website_version=website_version,
+    )
 
 
 @app.route("/scripts")
 @authentication_required()
 def wv_scripts():
     files = os.listdir(os.path.dirname(os.path.abspath(__file__)) + "/scripts")
-    return render_template("scripts.html", script_names=files, current_user=current_user, website_version=sha)
+    return render_template(
+        "scripts.html",
+        script_names=files,
+        current_user=current_user,
+        website_version=website_version,
+    )
 
 
 @app.route("/scripts/<file>")
@@ -232,20 +471,31 @@ def download_wv_script(file):
         data = data.replace("__getwvkeys_api_key__", current_user.api_key, 1)
         data = data.replace("__getwvkeys_api_url__", config.API_URL, 1)
         f = BytesIO(data.encode())
-        return send_file(f, as_attachment=True, download_name=path.name, mimetype="application/x-python-script")
+        return send_file(
+            f,
+            as_attachment=True,
+            download_name=path.name,
+            mimetype="application/x-python-script",
+        )
     return send_file(path, as_attachment=True)
 
 
 @app.route("/count")
 @cache.cached(timeout=300)
 def count():
-    return str(library.get_keycount())
+    # Check if cache should be refreshed (older than 1 hour)
+    if library.should_refresh_cache(max_age_seconds=3600):
+        library.update_cached_keycount()
+
+    return str(library.get_cached_keycount())
 
 
 @app.route("/favicon.ico")
 def favicon():
     return send_from_directory(
-        os.path.join(app.root_path, "static"), "favicon.ico", mimetype="image/vnd.microsoft.icon"
+        os.path.join(app.root_path, "static"),
+        "favicon.ico",
+        mimetype="image/vnd.microsoft.icon",
     )
 
 
@@ -261,7 +511,10 @@ def search():
         return jsonify(data)
     else:
         return render_template(
-            "search.html", page_title="Search Database", current_user=current_user, website_version=sha
+            "search.html",
+            page_title="Search Database",
+            current_user=current_user,
+            website_version=website_version,
         )
 
 
@@ -275,19 +528,28 @@ def keys():
     return library.add_keys(keys=keys, user_id=current_user.id)
 
 
-@app.route("/upload", methods=["GET", "POST"])
+@app.route("/upload/wvd", methods=["GET", "POST"])
 @authentication_required()
-def upload_file():
+def upload_wvd():
     if request.method == "POST":
         user = current_user.id
-        blob = request.files["blob"]
-        key = request.files["key"]
-        blob_base = base64.b64encode(blob.stream.read()).decode()
-        key_base = base64.b64encode(key.stream.read()).decode()
-        output = library.update_cdm(blob_base, key_base, user)
-        return render_template("upload_complete.html", page_title="Success", buildinfo=output, website_version=sha)
+        wvd = request.files["wvd"]
+        wvd_base = base64.b64encode(wvd.stream.read()).decode()
+        output = library.upload_wvd(wvd_base, user)
+        return render_template(
+            "upload_complete.html",
+            page_title="Success",
+            device_hash=output,
+            website_version=website_version,
+            device_name="WVD",
+        )
     elif request.method == "GET":
-        return render_template("upload.html", current_user=current_user, website_version=sha)
+        return render_template(
+            "upload.html",
+            current_user=current_user,
+            website_version=website_version,
+            device_name="WVD",
+        )
 
 
 @app.route("/upload/prd", methods=["GET", "POST"])
@@ -298,40 +560,103 @@ def upload_prd():
         prd = request.files["prd"]
         prd_base = base64.b64encode(prd.stream.read()).decode()
         output = library.upload_prd(prd_base, user)
-        return render_template("upload_prd_complete.html", page_title="Success", buildinfo=output, website_version=sha)
+        return render_template(
+            "upload_complete.html",
+            page_title="Success",
+            device_hash=output,
+            website_version=website_version,
+            device_name="PRD",
+        )
     elif request.method == "GET":
-        return render_template("upload_prd.html", current_user=current_user, website_version=sha)
+        return render_template(
+            "upload.html",
+            current_user=current_user,
+            website_version=website_version,
+            device_name="PRD",
+        )
 
 
-@app.route("/api", methods=["POST", "GET"])
+@app.route("/upload/system/wvd", methods=["GET", "POST"])
+@authentication_required()
+def upload_system_wvd():
+    if request.method == "POST":
+        wvd = request.files["wvd"]
+        enable_rotation = request.form.get("enable_rotation", "off")
+        # Convert enable_rotation to boolean
+        enable_rotation = enable_rotation == "on"
+        wvd_base = base64.b64encode(wvd.stream.read()).decode()
+        output = library.assign_system_wvd(wvd_base, enable_rotation)
+        return render_template(
+            "upload_complete.html",
+            page_title="Success",
+            device_hash=output,
+            website_version=website_version,
+            device_name="WVD",
+        )
+    elif request.method == "GET":
+        return render_template(
+            "upload_system.html",
+            current_user=current_user,
+            website_version=website_version,
+            device_name="WVD",
+        )
+
+
+@app.route("/upload/system/prd", methods=["GET", "POST"])
+@authentication_required()
+def upload_system_prd():
+    if request.method == "POST":
+        prd = request.files["prd"]
+        enable_rotation = request.form.get("enable_rotation", "off")
+        # Convert enable_rotation to boolean
+        enable_rotation = enable_rotation == "on"
+        prd_base = base64.b64encode(prd.stream.read()).decode()
+        output = library.assign_system_prd(prd_base, enable_rotation)
+        return render_template(
+            "upload_complete.html",
+            page_title="Success",
+            device_hash=output,
+            website_version=website_version,
+            device_name="PRD",
+        )
+    elif request.method == "GET":
+        return render_template(
+            "upload_system.html",
+            current_user=current_user,
+            website_version=website_version,
+            device_name="PRD",
+        )
+
+
+@app.route("/api", methods=["GET", "POST"])
 @authentication_required()
 def api():
-    if request.method == "POST":
+    if request.method == "GET":
+        return render_template("api.html", current_user=current_user, website_version=website_version)
+    elif request.method == "POST":
         event_data = request.get_json()
         (
-            proxy,
             license_url,
             pssh,
+            proxy,
             headers,
-            buildinfo,
+            device_hash,
             force,
-            server_certificate,
-            disable_privacy,
             downgrade,
+            certificate,
             is_web,
             is_curl,
             response,
             session_id,
         ) = (
-            event_data.get("proxy", ""),
             event_data.get("license_url"),
             event_data.get("pssh"),
+            event_data.get("proxy", ""),
             event_data.get("headers", ""),
-            event_data.get("buildInfo"),
+            event_data.get("device_hash"),
             event_data.get("force", False),
-            event_data.get("certificate"),
-            event_data.get("disable_privacy", False),
             event_data.get("downgrade"),
+            event_data.get("certificate"),
             event_data.get("is_web", False),
             event_data.get("is_curl", False),
             event_data.get("response"),
@@ -340,77 +665,243 @@ def api():
         if not pssh or not license_url:
             raise BadRequest("Missing Fields")
 
-        if not buildinfo:
-            buildinfo = libraries.get_random_cdm()
+        blacklist_check(device_hash, license_url)
 
-        blacklist_check(buildinfo, license_url)
+        drm_type: DRMType = DRMType.INVALID
+        service = None
 
-        magic = libraries.MainService.main(
-            library=library,
-            proxy=proxy,
-            license_url=license_url,
-            pssh=pssh,
-            headers=headers,
-            buildinfo=buildinfo,
-            force=force,
-            user_id=current_user.id,
-            server_certificate=server_certificate,
-            disable_privacy=disable_privacy,
-            downgrade=downgrade,
-            is_web=is_web,
-            response=response,
-            session_id=session_id,
+        if device_hash is None or device_hash == "":
+            # try to determine the drm type from the pssh
+            drm_type = library.get_pssh_drm_type(pssh)
+            logger.debug(f"[DEBUG] Detected DRM type from PSSH: {drm_type}")
+
+            # get a random device hash
+            if drm_type.is_playready():
+                device_hash = library.get_random_prd()
+            elif drm_type.is_widevine():
+                device_hash = library.get_random_wvd()
+        else:
+            # use the device hash to determine the drm system
+            drm_type = library.get_device_drm_type(device_hash)
+            logger.debug(f"[DEBUG] Detected DRM type from device hash: {drm_type}")
+
+        if drm_type.is_widevine():
+            service = Widevine(
+                library=library,
+                proxy=proxy,
+                license_url=license_url,
+                pssh=pssh,
+                headers=headers,
+                device_hash=device_hash,
+                force=force,
+                user_id=current_user.id,
+                server_certificate=certificate,
+                is_web=is_web,
+                response=response,
+                session_id=session_id,
+                is_curl=is_curl,
+            )
+        elif drm_type.is_playready():
+            service = PlayReady(
+                library=library,
+                proxy=proxy,
+                license_url=license_url,
+                pssh=pssh,
+                headers=headers,
+                device_hash=device_hash,
+                force=force,
+                user_id=current_user.id,
+                downgrade=downgrade,
+                is_web=is_web,
+                response=response,
+                session_id=session_id,
+                is_curl=is_curl,
+            )
+        else:
+            raise BadRequest("Unable to determine DRM type from PSSH or device hash")
+
+        if not service:
+            raise BadRequest("Unable to determine DRM type from PSSH or device hash")
+
+        return service.run()
+
+
+@app.route("/api/remotecdm")
+@optional_auth()
+def remote_cdm_ping():
+    return jsonify({"status": 200, "message": "pong"})
+
+
+@app.route("/api/remotecdm/<cdm_id>", methods=["GET"])
+@optional_auth()
+@remotecdm_validate_cdmid()
+def remote_cdm_config(cdm_id: str):
+    if cdm_id == "widevine":
+        return jsonify(
+            {
+                "device_name": "getwvkeys",
+                "device_type": "ANDROID",  # not used
+                "host": config.API_URL + "/api/remotecdm/widevine",
+                "secret": current_user.api_key if current_user.is_authenticated else "getwvkeys",
+                "security_level": 99,  # not used
+                "system_id": 9999,  # not used
+            }
         )
-        return magic.run(is_curl)
     else:
-        return render_template("api.html", current_user=current_user, website_version=sha)
-
-
-@app.route("/vinetrimmer", methods=["POST"])
-def vinetrimmer():
-    event_data = request.get_json()
-    # validate the request body
-    if not validators.vinetrimmer_validator(event_data):
-        return jsonify({"status_code": 400, "message": "Malformed Body"})
-
-    # get the data
-    (method, params, token) = (event_data["method"], event_data["params"], event_data["token"])
-    user = FlaskUser.get_user_by_api_key(db, token)
-    if not user:
-        return jsonify({"status_code": 401, "message": "Invalid API Key"})
-
-    if not user.flags.has(UserFlags.VINETRIMMER):
-        return jsonify({"status_code": 403, "message": "Missing Access"})
-
-    if method == "GetKeysX":
-        # Validate params required for method
-        if not validators.key_exchange_validator(params):
-            return jsonify({"status_code": 400, "message": "Malformed Params"})
-        return jsonify({"status_code": 501, "message": "Method Not Implemented"})
-    elif method == "GetKeys":
-        # Validate params required for method
-        if not validators.keys_validator(params):
-            return jsonify({"status_code": 400, "message": "Malformed Params"})
-        (cdmkeyresponse, session_id) = (params["cdmkeyresponse"], params["session_id"])
-        magic = libraries.Pywidevine(library, user.id, response=cdmkeyresponse, session_id=session_id, buildinfo=None)
-        res = magic.vinetrimmer(library)
-        return jsonify({"status_code": 200, "message": res})
-    elif method == "GetChallenge":
-        # Validate params required for method
-        if not validators.challenge_validator(params):
-            return jsonify({"status_code": 400, "message": "Malformed Params"})
-        (init, cert, raw, licensetype, device) = (
-            params["init"],
-            params["cert"],
-            params["raw"],
-            params["licensetype"],
-            params["device"],
+        return jsonify(
+            {
+                "device_name": "getwvkeys",
+                "host": config.API_URL + "/api/remotecdm/playready",
+                "secret": current_user.api_key if current_user.is_authenticated else "getwvkeys",
+                "security_level": "999",  # not used
+            }
         )
-        magic = libraries.Pywidevine(library, user.id, pssh=init, buildinfo=device, server_certificate=cert)
-        res = magic.vinetrimmer(library)
-        return jsonify({"status_code": 200, "message": res})
 
-    return jsonify({"status_code": 400, "message": "Invalid Method"})
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/open", methods=["GET"])
+# @remotecdm_authentication_required()
+@optional_auth()
+@remotecdm_validate_cdmid()
+def remote_cdm_open(cdm_id: str, device_name: str):
+    return library.remote_cdm_open(cdm_id, device_name)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/close/<session_id>", methods=["GET"])
+# @remotecdm_authentication_required()
+@optional_auth()
+@remotecdm_validate_cdmid()
+def remote_cdm_close(cdm_id: str, device_name: str, session_id: str):
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_close(cdm_id, device_name, session_id)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/set_service_certificate", methods=["POST"])
+# @remotecdm_authentication_required()
+@optional_auth()
+@remotecdm_validate_cdmid()
+@remotecdm_require_cdmids(cdm_ids=["widevine"])
+@ensure_body_keys(required_keys=["session_id", "certificate"])
+def remote_cdm_set_service_certificate(cdm_id: str, device_name: str):
+
+    event_data = request.get_json()
+    (session_id, certificate) = (event_data["session_id"], event_data["certificate"])
+
+    session_id = bytes.fromhex(session_id)
+
+    return library.remote_cdm_set_service_certificate(cdm_id, device_name, session_id, certificate)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_service_certificate", methods=["POST"])
+# @remotecdm_authentication_required()
+@optional_auth()
+@remotecdm_validate_cdmid()
+@remotecdm_require_cdmids(cdm_ids=["widevine"])
+@ensure_body_keys(required_keys=["session_id"])
+def remote_cdm_get_service_certificate(cdm_id: str, device_name: str):
+    event_data = request.get_json()
+    session_id = event_data["session_id"]
+    session_id = bytes.fromhex(session_id)
+
+    return library.remote_cdm_get_service_certificate(cdm_id, device_name, session_id)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_license_challenge", methods=["POST"])
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_license_challenge/<license_type>", methods=["POST"])
+# @remotecdm_authentication_required()
+@optional_auth()
+@remotecdm_validate_cdmid()
+@ensure_body_keys(required_keys=["session_id", "init_data"])
+def remote_cdm_license_challenge(cdm_id: str, device_name: str, license_type: str = "STREAMING"):
+    event_data = request.get_json()
+    (session_id, init_data) = (event_data["session_id"], event_data["init_data"])
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_license_challenge(cdm_id, device_name, license_type, session_id, init_data)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/parse_license", methods=["POST"])
+# @remotecdm_authentication_required()
+@optional_auth()
+@remotecdm_validate_cdmid()
+@ensure_body_keys(required_keys=["session_id", "license_message"])
+def remote_cdm_parse_license(cdm_id: str, device_name: str):
+    event_data = request.get_json()
+    (session_id, license_message) = (event_data["session_id"], event_data["license_message"])
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_parse_license(cdm_id, device_name, session_id, license_message)
+
+
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_keys", methods=["POST"])
+@app.route("/api/remotecdm/<cdm_id>/<device_name>/get_keys/<key_type>", methods=["POST"])
+# @remotecdm_authentication_required()
+@optional_auth()
+@remotecdm_validate_cdmid()
+@ensure_body_keys(required_keys=["session_id"])
+def remote_cdm_get_keys(cdm_id: str, device_name: str, key_type: str = "STREAMING"):
+    event_data = request.get_json()
+    session_id = event_data["session_id"]
+    session_id = bytes.fromhex(session_id)
+    return library.remote_cdm_get_keys(
+        cdm_id, device_name, key_type, session_id, current_user.id if current_user.is_authenticated else None
+    )
+
+
+# @app.route("/vinetrimmer", methods=["POST"])
+# def vinetrimmer():
+#     event_data = request.get_json()
+#     # validate the request body
+#     if not validators.vinetrimmer_validator(event_data):
+#         return jsonify({"status_code": 400, "message": "Malformed Body"})
+
+#     # get the data
+#     (method, params, token) = (
+#         event_data["method"],
+#         event_data["params"],
+#         event_data["token"],
+#     )
+#     user = FlaskUser.get_user_by_api_key(db, token)
+#     if not user:
+#         return jsonify({"status_code": 401, "message": "Invalid API Key"})
+
+#     if not user.flags.has(UserFlags.VINETRIMMER):
+#         return jsonify({"status_code": 403, "message": "Missing Access"})
+
+#     if method == "GetKeysX":
+#         # Validate params required for method
+#         if not validators.key_exchange_validator(params):
+#             return jsonify({"status_code": 400, "message": "Malformed Params"})
+#         return jsonify({"status_code": 501, "message": "Method Not Implemented"})
+#     elif method == "GetKeys":
+#         # Validate params required for method
+#         if not validators.keys_validator(params):
+#             return jsonify({"status_code": 400, "message": "Malformed Params"})
+#         (cdmkeyresponse, session_id) = (params["cdmkeyresponse"], params["session_id"])
+#         magic = libraries.Pywidevine(
+#             library,
+#             user.id,
+#             response=cdmkeyresponse,
+#             session_id=session_id,
+#             buildinfo=None,
+#         )
+#         res = magic.vinetrimmer(library)
+#         return jsonify({"status_code": 200, "message": res})
+#     elif method == "GetChallenge":
+#         # Validate params required for method
+#         if not validators.challenge_validator(params):
+#             return jsonify({"status_code": 400, "message": "Malformed Params"})
+#         (init, cert, raw, licensetype, device) = (
+#             params["init"],
+#             params["cert"],
+#             params["raw"],
+#             params["licensetype"],
+#             params["device"],
+#         )
+#         magic = libraries.Pywidevine(
+#             library, user.id, pssh=init, buildinfo=device, server_certificate=cert
+#         )
+#         res = magic.vinetrimmer(library)
+#         return jsonify({"status_code": 200, "message": res})
+
+#     return jsonify({"status_code": 400, "message": "Invalid Method"})
 
 
 @app.route("/vault", methods=["GET"])
@@ -456,7 +947,12 @@ def login():
         redirect_uri=config.OAUTH2_REDIRECT_URL,
         scope=["guilds", "guilds.members.read", "identify"],
     )
-    return render_template("login.html", auth_url=request_uri, current_user=current_user, website_version=sha)
+    return render_template(
+        "login.html",
+        auth_url=request_uri,
+        current_user=current_user,
+        website_version=website_version,
+    )
 
 
 @app.route("/login/callback")
@@ -517,27 +1013,31 @@ def logout():
 @app.route("/me")
 @authentication_required()
 def user_profile():
-    user_cdms = current_user.get_user_cdms()
+    user_wvds = current_user.get_user_wvds()
     user_prds = current_user.get_user_prds()
     return render_template(
-        "profile.html", current_user=current_user, cdms=user_cdms, prds=user_prds, website_version=sha
+        "profile.html",
+        current_user=current_user,
+        wvds=user_wvds,
+        prds=user_prds,
+        website_version=website_version,
     )
 
 
-@app.route("/me/cdms/<id>", methods=["DELETE"])
+@app.route("/me/wvds/<id>", methods=["DELETE"])
 @authentication_required()
-def user_delete_cdm(id):
+def user_delete_wvd(id):
     if not id:
-        raise BadRequest("No CDM ID provided")
-    current_user.delete_cdm(id)
-    return jsonify({"status_code": 200, "message": "CDM Deleted"})
+        raise BadRequest("No WVD ID provided")
+    current_user.delete_wvd(id)
+    return jsonify({"status_code": 200, "message": "WVD Deleted"})
 
 
-@app.route("/me/cdms", methods=["GET"])
+@app.route("/me/wvds", methods=["GET"])
 @authentication_required()
-def user_get_cdms():
-    user_cdms = current_user.get_user_cdms()
-    return jsonify({"status_code": 200, "message": user_cdms})
+def user_get_wvds():
+    user_wvds = current_user.get_user_wvds()
+    return jsonify({"status_code": 200, "message": user_wvds})
 
 
 @app.route("/me/prds/<id>", methods=["DELETE"])
@@ -556,13 +1056,250 @@ def user_get_prds():
     return jsonify({"status_code": 200, "message": user_prds})
 
 
+@app.route("/admin/system-devices")
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_system_devices():
+    return render_template(
+        "admin_devices.html",
+        current_user=current_user,
+        website_version=website_version,
+    )
+
+
+@app.route("/admin/api-system-devices", methods=["GET"])
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_get_system_devices():
+    try:
+        system_user = FlaskUser.get_system_user(db)
+        wvds = system_user.user_model.wvds
+        prds = system_user.user_model.prds
+
+        wvd_data = []
+        for wvd in wvds:
+            device = wvd.to_device()
+            wvd_data.append(
+                {
+                    **wvd_to_dict(device),
+                    "hash": wvd.hash,
+                    "id": wvd.id,
+                    "enabled_for_rotation": wvd.enabled_for_rotation,
+                }
+            )
+
+        prd_data = []
+        for prd in prds:
+            device = prd.to_device()
+            prd_data.append(
+                {
+                    **prd_to_dict(device),
+                    "hash": prd.hash,
+                    "id": prd.id,
+                    "enabled_for_rotation": prd.enabled_for_rotation,
+                }
+            )
+
+        return jsonify({"wvds": wvd_data, "prds": prd_data})
+    except Exception as e:
+        logger.error(f"Error getting system devices: {e}")
+        return jsonify({"error": True, "message": str(e)}), 500
+
+
+@app.route("/admin/system-devices/<device_type>/<int:device_id>/rotation", methods=["PATCH"])
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_toggle_device_rotation(device_type, device_id):
+    try:
+        event_data = request.get_json()
+        enabled = event_data.get("enabled", False)
+
+        device = library.set_device_rotation_status(device_id, device_type, enabled)
+
+        # Rebuild rotation config cache
+        library.build_rotation_config_cache()
+
+        action = "enabled" if enabled else "disabled"
+        return jsonify(
+            {
+                "message": f"{device_type.upper()} device rotation {action} successfully",
+                "device_id": device_id,
+                "enabled": enabled,
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error toggling device rotation: {e}")
+        return jsonify({"error": True, "message": str(e)}), 400
+
+
+@app.route("/admin/system-devices/<device_type>/<int:device_id>", methods=["DELETE"])
+@authentication_required(flags_required=UserFlags.ADMIN)
+def admin_delete_system_device(device_type, device_id):
+    try:
+        system_user = FlaskUser.get_system_user(db)
+
+        if device_type.lower() == "wvd":
+            device = WVD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+        elif device_type.lower() == "prd":
+            device = PRD.query.filter_by(id=device_id, uploaded_by=system_user.id).first()
+        else:
+            raise BadRequest("Invalid device type")
+
+        if not device:
+            raise BadRequest("Device not found or not owned by system user")
+
+        # Remove device from database
+        db.session.delete(device)
+        db.session.commit()
+
+        # Rebuild rotation config cache
+        library.build_rotation_config_cache()
+
+        return jsonify({"message": f"{device_type.upper()} device deleted successfully", "device_id": device_id})
+    except Exception as e:
+        logger.error(f"Error deleting device: {e}")
+        return jsonify({"error": True, "message": str(e)}), 400
+
+
+@app.route("/upload/database", methods=["GET", "POST"])
+def upload_database():
+    if request.method == "GET":
+        return render_template(
+            "upload_db.html",
+            current_user=current_user,
+            website_version=website_version,
+        )
+
+    if "database" not in request.files:
+        return (
+            render_template(
+                "upload_db_result.html",
+                error="No file uploaded",
+                current_user=current_user,
+                website_version=website_version,
+            ),
+            400,
+        )
+
+    file = request.files["database"]
+    if file.filename == "":
+        return (
+            render_template(
+                "upload_db_result.html",
+                error="No file selected",
+                current_user=current_user,
+                website_version=website_version,
+            ),
+            400,
+        )
+
+    valid_extensions = [".db", ".sqlite", ".sqlite3", ".db3"]
+    if not any(file.filename.lower().endswith(ext) for ext in valid_extensions):
+        return (
+            render_template(
+                "upload_db_result.html",
+                error="Invalid file type",
+                current_user=current_user,
+                website_version=website_version,
+            ),
+            400,
+        )
+
+    preview_mode = request.form.get("preview") == "on"
+
+    try:
+        filename = secure_filename(file.filename)
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, filename)
+        print(temp_path)
+        file.save(temp_path)
+
+        if preview_mode:
+            result = library.validate_sqlite_database(temp_path)
+
+            os.remove(temp_path)
+
+            if not result["valid"]:
+                return render_template("upload_db_result.html", error=result["error"]), 400
+
+            return render_template(
+                "upload_db_result.html",
+                preview_mode=True,
+                summary={
+                    "total_tables": result["total_tables"],
+                    "total_keys": result["total_keys"],
+                    "imported_keys": 0,
+                    "skipped_keys": 0,
+                },
+                tables=result["tables"],
+                current_user=current_user,
+                website_version=website_version,
+            )
+        else:
+            import_worker = current_app.import_worker
+            task_id = import_worker.create_task(current_user.id, filename, temp_path)
+
+            os.remove(temp_path)
+
+            return redirect(url_for("import_progress", task_id=task_id))
+
+    except Exception as e:
+        if "temp_path" in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+        return (
+            render_template(
+                "upload_db_result.html", current_user=current_user, website_version=website_version, error=str(e)
+            ),
+            500,
+        )
+
+
+@app.route("/upload/database/progress/<task_id>")
+def import_progress(task_id):
+    """Show import progress page"""
+    return render_template(
+        "upload_db_progress.html",
+        task_id=task_id,
+        current_user=current_user,
+        website_version=website_version,
+    )
+
+
+@app.route("/api/import/status/<task_id>")
+def import_status(task_id):
+    """API endpoint to get import task status"""
+    from getwvkeys.libraries import Library
+    from getwvkeys.models.Shared import db
+
+    library = Library(db)
+    status = library.get_import_task_status(task_id)
+
+    return jsonify(status)
+
+
+@app.route("/api/import/worker/status")
+def worker_status():
+    status = current_app.import_worker.get_status()
+
+    with current_app.app_context():
+        pending = ImportTask.query.filter_by(status="pending").count()
+        running = ImportTask.query.filter_by(status="running").count()
+
+    status.update({"pending_tasks": pending, "running_tasks": running})
+
+    return jsonify(status)
+
+
 # error handlers
 @app.errorhandler(DatabaseError)
 def database_error(e: Exception):
     logger.exception(e)  # database errors should always be logged as they are unexpected
     if request.method == "GET":
         return (
-            render_template("error.html", title=str(e), details="", current_user=current_user, website_version=sha),
+            render_template(
+                "error.html",
+                title=str(e),
+                details="",
+                current_user=current_user,
+                website_version=website_version,
+            ),
             400,
         )
     return jsonify({"error": True, "code": 400, "message": str(e)}), 400
@@ -577,7 +1314,11 @@ def http_exception(e: HTTPException):
             return app.login_manager.unauthorized()
         return (
             render_template(
-                "error.html", title=e.name, details=e.description, current_user=current_user, website_version=sha
+                "error.html",
+                title=e.name,
+                details=e.description,
+                current_user=current_user,
+                website_version=website_version,
             ),
             e.code,
         )
@@ -595,12 +1336,18 @@ def gone_exception(e: Gone):
                 title=e.name,
                 details="The page you are looking for is no longer available.",
                 current_user=current_user,
-                website_version=sha,
+                website_version=website_version,
             ),
             e.code,
         )
     return (
-        jsonify({"error": True, "code": 500, "message": "The page you are looking for is no longer available."}),
+        jsonify(
+            {
+                "error": True,
+                "code": 410,
+                "message": "The page you are looking for is no longer available.",
+            }
+        ),
         e.code,
     )
 
@@ -616,7 +1363,7 @@ def oauth2_error(e: OAuth2Error):
             title=e.description,
             details="The code was probably already used or is invalid.",
             current_user=current_user,
-            website_version=sha,
+            website_version=website_version,
         ),
         e.status_code,
     )
@@ -632,16 +1379,22 @@ class Moved(HTTPException):
 
 
 # routes that are removed
-@app.route("/pssh")
-def pssh():
-    raise Moved("This route is no longer available, please use /api instead")
+@app.route("/upload")
+def upload():
+    raise Gone("This route is no longer available, please use /upload/prd or /upload/wvd instead")
 
 
 # routes that have been moved
 @app.route("/findpssh", methods=["GET", "POST"])
 def findpssh():
     return (
-        jsonify({"error": True, "code": 301, "message": "The page you are looking for has been moved to /search."}),
+        jsonify(
+            {
+                "error": True,
+                "code": 301,
+                "message": "The page you are looking for has been moved to /search.",
+            }
+        ),
         409,
     )
 
@@ -649,19 +1402,15 @@ def findpssh():
 @app.route("/dev", methods=["GET", "POST"])
 def dev():
     return (
-        jsonify({"error": True, "code": 301, "message": "The page you are looking for has been moved to /keys."}),
+        jsonify(
+            {
+                "error": True,
+                "code": 301,
+                "message": "The page you are looking for has been moved to /keys.",
+            }
+        ),
         409,
     )
-
-
-@app.route("/download/<file>")
-def downloadfile_old(file):
-    return redirect("/scripts/{}".format(file), 301)
-
-
-@app.route("/wv", methods=["GET", "POST"])
-def wv():
-    return redirect("/api", 307)
 
 
 @app.route("/pywidevine", methods=["GET", "POST"])
@@ -669,8 +1418,44 @@ def pywidevine():
     return redirect("/api", 307)
 
 
+@app.route("/wv", methods=["GET", "POST"])
+def wv():
+    return redirect("/api", 307)
+
+
+@app.route("/download/<file>")
+def downloadfile_old(file):
+    return redirect("/scripts/{}".format(file), 301)
+
+
+@app.route("/me/cdms/<id>", methods=["DELETE"])
+@authentication_required()
+def user_delete_cdm(id):
+    return redirect("/me/wvds/{}".format(id), 307)
+
+
+@app.route("/me/wvds", methods=["GET"])
+@authentication_required()
+def user_get_cdms():
+    return redirect("/me/wvds", 307)
+
+
 def main():
-    app.run(config.API_HOST, config.API_PORT, debug=config.IS_DEVELOPMENT, use_reloader=False)
+    app.run(
+        config.API_HOST,
+        config.API_PORT,
+        debug=config.IS_DEVELOPMENT,
+        use_reloader=False,
+    )
+
+
+def run_migrations():
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
+
+
+if __name__ == "__main__":
+    main()
 
 
 def run_migrations():

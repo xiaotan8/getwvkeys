@@ -119,14 +119,14 @@ main {
 .form-container {
     display: flex;
     margin: 64px 36px 0 36px;
+    justify-content: center;
 }
 .form-container > form {
     display: flex;
     flex-grow: 1;
     flex-direction: column;
-    margin-left: auto;
-    margin-right: auto;
     max-width: 1080px;
+    gap: 16px;
 }
 
 .form-item {
@@ -137,7 +137,7 @@ main {
 .form-item-items {
     display: flex;
     flex-direction: column;
-    margin-left: 24px;
+    /* margin-left: 24px; */
     flex: 1;
     width: 100%;
 }
@@ -146,10 +146,10 @@ main {
     color: gray;
     font-size: 0.875rem;
 }
-
+/* 
 .form-item:not(:first-child) {
     margin-top: 16px;
-}
+} */
 
 .form-item > span {
     min-width: 120px;
@@ -172,6 +172,10 @@ input[type="password"] {
     color: #fffffe;
     background-color: #242629;
     width: 100%;
+}
+input[type="file"] {
+    position: relative;
+    left: 30px;
 }
 
 textarea {
@@ -201,8 +205,6 @@ input[type="submit"] {
     border: 0;
     margin-top: 24px;
     padding: 12px 48px;
-    margin-left: auto;
-    margin-right: auto;
     transition: transform 0.2s ease-in;
 }
 input[type="submit"]:disabled {
@@ -258,10 +260,32 @@ input[type="submit"]:focus {
     word-break: break-all;
     margin: 64px 16px 0 8px;
 }
-.api-request {
+.api {
     margin: 0 auto 0 auto;
     max-width: 1440px;
 }
+
+.api #sections {
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+}
+
+#sections > section {
+    padding: 24px;
+    background-color: hsla(0, 0%, 100%, 0.07);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+}
+
+#sections > section > section {
+    background-color: hsla(0, 0%, 100%, 0.04);
+    border-radius: 8px;
+    padding: 24px;
+}
+
 .request-item > h2 {
     color: #fffffe;
 }
@@ -317,20 +341,29 @@ summary > * {
     gap: 64px;
 }
 .upload-container > form {
-    margin-top: 64px;
     display: flex;
     flex-direction: column;
+    margin-top: 24px;
+    background-color: hsla(0, 0%, 100%, 0.05);
+    padding: 24px;
+    border-radius: 8px;
 }
 .upload-form-item:not(:first-child) {
     margin-top: 36px;
 }
 .upload-form-item {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: center;
 }
-.upload-form-item > input {
+.upload-form-item > label {
+    font-size: 1.125rem;
+    color: #fffffe;
+    margin-bottom: 8px;
+}
+/* .upload-form-item > input {
     margin-left: 16px;
-}
+} */
 
 footer {
     background-color: #242629;
@@ -434,7 +467,7 @@ input[name="login"]:focus {
     display: none;
     position: absolute;
     background-color: #36333c;
-    min-width: 160px;
+    min-width: 200px;
     z-index: 1;
     box-shadow: 5px 5px 15px rgba(0, 0, 0, 0.4);
     -webkit-box-shadow: 5px 5px 15px rgba(0, 0, 0, 0.4);
@@ -467,6 +500,7 @@ input[name="login"]:focus {
     margin-left: auto;
     margin-right: auto;
     max-width: 1080px;
+    gap: 16px;
 }
 .flex-column {
     display: flex;
@@ -518,9 +552,9 @@ input[name="login"]:focus {
     align-items: center;
     justify-content: flex-end;
 }
-.section-divider {
+/* .section-divider {
     margin: 32px 0 12px 0;
-}
+} */
 ul {
     list-style-type: none;
     margin: 0;
@@ -599,8 +633,29 @@ button[type="enable"]:focus {
 }
 
 pre {
+    background-color: hsla(0, 0%, 100%, 0.04);
+    color: #fffffe;
+    padding: 8px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-family: monospace;
+    font-size: 1rem;
+    margin-top: 16px;
     white-space: pre-wrap;
-    margin-left: 30px;
+}
+
+pre code {
+    color: #fffffe;
+    border-radius: 4px;
+    font-family: monospace;
+}
+
+/* code blocks NOT inside a pre */
+code:not(pre code) {
+    background-color: hsla(0, 0%, 100%, 0.08);
+    padding: 1px 4px;
+    font-size: 1rem;
+    border-radius: 4px;
 }
 
 .delete-button {
@@ -632,4 +687,168 @@ pre {
 .keycount-wrapper {
     display: flex;
     justify-content: center;
+}
+
+.keycount-wrapper > span {
+    color: hsla(0, 0%, 100%, 0.9);
+    font-size: 1rem;
+}
+
+.index-page {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3rem 1rem;
+    text-align: center;
+}
+
+header {
+    margin-bottom: 2rem;
+}
+
+.index-page .subtitle {
+    font-size: 1.2rem;
+    color: #666;
+}
+
+.button-container {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: 100%;
+    max-width: 800px;
+}
+
+.upload header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+}
+
+.upload header p {
+    max-width: 50vw;
+    font-size: 0.8rem;
+    color: hsla(0, 0%, 100%, 0.7);
+    margin-top: 0.5rem;
+}
+
+.api section p {
+    color: hsla(0, 0%, 100%, 0.7);
+    font-size: 0.9rem;
+}
+
+.api ul {
+    margin-top: 8px;
+    list-style: circle;
+    padding-left: 20px;
+}
+
+.api strong {
+    color: hsla(0, 0%, 100%, 0.9);
+}
+
+.upload-complete {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+/* The switch - the box around the slider */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 24px;
+}
+
+/* Hide default HTML checkbox */
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+/* The slider */
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: hsl(136, 52.7%, 43.1%);
+    -webkit-transition: 0.4s;
+    transition: 0.4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    -webkit-transition: 0.4s;
+    transition: 0.4s;
+}
+
+input:checked + .slider {
+    background-color: hsl(207, 100%, 42.2%);
+}
+
+input:checked + .slider:before {
+    -webkit-transform: translateX(26px);
+    -ms-transform: translateX(26px);
+    transform: translateX(26px);
+}
+
+/* Rounded sliders */
+.slider.round {
+    border-radius: 34px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+.form-interactives {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.downgrade-item {
+    display: none;
+}
+
+.keys {
+    align-items: center;
+}
+
+.keys > span {
+    font-weight: 100;
+}
+
+button[type="submit"] {
+    border-radius: 4px;
+    color: #fffffe;
+    font-size: 1.125rem;
+    background-color: #7f5af0;
+    border: 0;
+    margin-top: 24px;
+    padding: 12px 48px;
+    transition: transform 0.2s ease-in;
+}
+button[type="submit"]:disabled {
+    background-color: #6146b1;
+}
+button[type="submit"]:hover {
+    transform: scale(1.02);
+    cursor: pointer;
+    background-color: #6146b1;
 }

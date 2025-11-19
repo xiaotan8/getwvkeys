@@ -6,8 +6,8 @@ Widevine Utility Website and Remote Widevine Device API.
 
 -   Install Python Poetry: https://python-poetry.org/docs/master/#installation
 -   Install Dependencies:
-    -   For MySQL: `poetry install -E mysql`
-    -   For MariaDB: `poetry install -E mariadb`
+    -   For MySQL: `poetry install --with mysql`
+    -   For MariaDB: `poetry install --with mariadb`
 -   Copy `getwvkeys/config.toml.example` to `getwvkeys/config.toml` (or the appropriate name for the environment)
 -   Edit `config.toml`
     -   For a MySQL Database, use the prefix `mysql+mariadbconnector`
@@ -58,3 +58,9 @@ _never use more than 1 worker, getwvkeys does not currently support that and you
 -   GetWVKeys uses dynamic injection for scripts, this means that when a user downloads a script and is logged in, the server injects certain values by replacing strings such as their API key. Available placeholders are:
     -   `__getwvkeys_api_key__`: Authenticated users api key
     -   `__getwvkeys_api_url__`: The instances API URL, this is used for staging and production mainly but can also be used for self hosted instances
+-   if you get an error when running migrations, note that your database needs to be created with:
+
+```
+CHARACTER SET utf8mb4
+COLLATE utf8mb4_general_ci;
+```

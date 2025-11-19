@@ -1,18 +1,18 @@
 """
- This file is part of the GetWVKeys project (https://github.com/GetWVKeys/getwvkeys)
- Copyright (C) 2022-2024 Notaghost, Puyodead1 and GetWVKeys contributors 
- 
- This program is free software: you can redistribute it and/or modify
- it under the terms of the GNU Affero General Public License as published
- by the Free Software Foundation, version 3 of the License.
+This file is part of the GetWVKeys project (https://github.com/GetWVKeys/getwvkeys)
+Copyright (C) 2022-2024 Notaghost, Puyodead1 and GetWVKeys contributors
 
- This program is distributed in the hope that it will be useful,
- but WITHOUT ANY WARRANTY; without even the implied warranty of
- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- GNU Affero General Public License for more details.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published
+by the Free Software Foundation, version 3 of the License.
 
- You should have received a copy of the GNU Affero General Public License
- along with this program.  If not, see <https://www.gnu.org/licenses/>.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
 
 import json
@@ -93,7 +93,10 @@ class Redis:
                         self.publish_error(reply_to, "Error enabling user {}: {}".format(user_id, e))
             elif op == OPCode.KEY_COUNT.value:
                 with self.app.app_context():
-                    self.publish_response(reply_to, self.library.get_keycount())
+                    if self.library.should_refresh_cache(max_age_seconds=3600):
+                        self.library.update_cached_keycount()
+            
+                    self.publish_response(reply_to, self.library.get_cached_keycount())
             elif op == OPCode.USER_COUNT.value:
                 with self.app.app_context():
                     self.publish_response(reply_to, FlaskUser.get_user_count())
@@ -131,7 +134,10 @@ class Redis:
                         )
                     except Exception as e:
                         logger.exception("Error updating permissions for {}: {}".format(user_id, e))
-                        self.publish_error(reply_to, "Error updating permissions for {}: {}".format(user_id, e))
+                        self.publish_error(
+                            reply_to,
+                            "Error updating permissions for {}: {}".format(user_id, e),
+                        )
             elif op == OPCode.QUARANTINE.value:
                 # TODO: Implement
                 self.publish_error(reply_to, "Not implemented")
@@ -144,9 +150,15 @@ class Redis:
                         return
                     try:
                         user.reset_api_key()
-                        self.publish_response(reply_to, "API Key has been reset for user {}".format(user.username))
+                        self.publish_response(
+                            reply_to,
+                            "API Key has been reset for user {}".format(user.username),
+                        )
                     except Exception as e:
-                        self.publish_error(reply_to, "Error resetting API Key for {}: {}".format(user.username, str(e)))
+                        self.publish_error(
+                            reply_to,
+                            "Error resetting API Key for {}: {}".format(user.username, str(e)),
+                        )
             else:
                 self.publish_error(reply_to, "Unknown OPCode {}".format(op))
         except json.JSONDecodeError:
