@@ -2,6 +2,8 @@
 
 Widevine Utility Website and Remote Widevine Device API.
 
+**[中文文档 (Chinese Documentation)](README.zh-CN.md)** | [English](README.md)
+
 # Setup
 
 -   Install Python Poetry: https://python-poetry.org/docs/master/#installation
